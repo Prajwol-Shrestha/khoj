@@ -168,29 +168,89 @@ export default function ChatWindow({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question, sessionId }),
         });
-        const data = (await res.json()) as ChatApiResponse | ApiError;
-
+        
         if (!res.ok) {
+          const data = (await res.json()) as ChatApiResponse | ApiError;
           throw new Error(
             (data as ApiError).error ||
               "Something went wrong retrieving an answer.",
           );
         }
 
-        const ok = data as ChatApiResponse;
-        setMessages((m) =>
-          m.map((msg) =>
-            msg.id === pendingId
-              ? {
-                  id: pendingId,
-                  role: "assistant",
-                  content: ok.answer,
-                  sources: ok.sources,
-                  tokensUsed: ok.tokensUsed,
-                }
-              : msg,
-          ),
-        );
+        const contentType = res.headers.get("Content-Type") ?? "";
+
+        // non-streaming
+        if (!contentType.includes("text/event-stream")) {
+          const data = await res.json();
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === pendingId
+                ? {
+                    id: pendingId,
+                    role: "assistant",
+                    content: data.answer,
+                    sources: data.sources,
+                  }
+                : msg,
+            ),
+          );
+          return;
+        }
+
+        // streaming
+        const reader = res.body?.getReader();
+        if (!reader) {
+          throw new Error("Failed to get reader");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() ?? ""; // keep incomplete chunk in buffer
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue; // skip invalid lines
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              if (event.type === "sources") {
+                // source arrive first
+                setMessages((m) =>
+                  m.map((msg) =>
+                    msg.id === pendingId
+                      ? { ...msg, sources: event.sources }
+                      : msg,
+                  ),
+                );
+              }
+              if (event.type === "token") {
+                // append each token to the message content
+                setMessages((m) =>
+                  m.map((msg) =>
+                    msg.id === pendingId
+                      ? {
+                          ...msg,
+                          content: msg.content + event.content,
+                          pending: false,
+                        }
+                      : msg,
+                  ),
+                );
+              }
+
+              if (event.type === "done") {
+                break;
+              }
+            } catch (err) {
+              console.error("Stream Parse error", err);
+            }
+          }
+        }
       } catch (e) {
         const message =
           e instanceof Error
