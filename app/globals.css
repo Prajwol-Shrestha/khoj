@@ -1,26 +1,211 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --void: #080c0d;
+  --panel: #0e1416;
+  --panel-2: #121a1c;
+  --panel-3: #182225;
+  --line: #1d292b;
+  --line-bright: #2a3a3d;
+
+  --ink: #e6f0ee;
+  --muted: #819894;
+  --faint: #4d5d5b;
+
+  --green: #3ddc84;
+  --green-deep: #1f9d5a;
+  --cyan: #2bd4e4;
+  --cyan-deep: #1796a3;
+  --amber: #f5b544;
+  --red: #ff5f57;
+
+  --background: var(--void);
+  --foreground: var(--ink);
 }
 
 @theme inline {
+  --color-void: var(--void);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-line: var(--line);
+  --color-line-bright: var(--line-bright);
+
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  --color-green: var(--green);
+  --color-green-deep: var(--green-deep);
+  --color-cyan: var(--cyan);
+  --color-cyan-deep: var(--cyan-deep);
+  --color-amber: var(--amber);
+  --color-red: var(--red);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--void);
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  background-color: var(--void);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(118, 150, 145, 0.08) 1px, transparent 0),
+    radial-gradient(900px 500px at 50% -10%, rgba(61, 220, 132, 0.06), transparent 70%);
+  background-size: 26px 26px, 100% 100%;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(61, 220, 132, 0.25);
+  color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-bright);
+  border-radius: 999px;
+  border: 2px solid var(--void);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #344648;
+}
+
+.mono-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.caret {
+  display: inline-block;
+  width: 0.6ch;
+  color: var(--green);
+  animation: blink 1.1s steps(1) infinite;
+}
+
+.glow-green {
+  box-shadow:
+    0 0 0 1px rgba(61, 220, 132, 0.35),
+    0 0 28px -6px rgba(61, 220, 132, 0.45);
+}
+.text-glow {
+  text-shadow: 0 0 22px rgba(61, 220, 132, 0.35);
+}
+
+.match-track {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.match-seg {
+  width: 6px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--line-bright);
+  transform: scaleY(0.55);
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.3s;
+}
+.match-seg.on {
+  background: var(--cyan);
+  transform: scaleY(1);
+  box-shadow: 0 0 8px -1px rgba(43, 212, 228, 0.7);
+}
+
+.scanline {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.scanline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -40%;
+  height: 40%;
+  background: linear-gradient(180deg, transparent, rgba(43, 212, 228, 0.1), transparent);
+  animation: sweep 2.4s ease-in-out 1;
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.scan-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: var(--green);
+  animation: bounce 1.2s ease-in-out infinite;
+}
+.scan-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.scan-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+@keyframes sweep {
+  from { top: -40%; }
+  to { top: 140%; }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret,
+  .animate-fade-up,
+  .scan-dots span,
+  .match-seg {
+    animation: none;
+    transition: none;
+  }
+  .scanline::after {
+    animation: none;
+    display: none;
+  }
+  .animate-spin-slow {
+    animation-duration: 2s;
+  }
 }

@@ -5,8 +5,27 @@ import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import pdfParse from "pdf-parse";
 
+const requests = new Map<string, number[]>();
+
+export function rateLimit(
+  req: NextRequest,
+  limit = 5,
+  windowMs = 60_000,
+): boolean {
+  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+  const now = Date.now();
+  const timestamps = (requests.get(ip) ?? []).filter((t) => now - t < windowMs);
+  timestamps.push(now);
+  requests.set(ip, timestamps);
+  return timestamps.length <= limit;
+}
+
 export async function POST(req: NextRequest) {
   try {
+    if (!rateLimit(req)) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
     const authClient = await createClient(); // get the user
     const supabase = createAdminClient(); // all DB/storage ops
 
@@ -22,6 +41,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "Only PDFs are supported" },
         { status: 400 },
+      );
+    }
+
+    if (file.size > 20 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: "File too large. Max 20MB." },
+        { status: 413 },
       );
     }
 
