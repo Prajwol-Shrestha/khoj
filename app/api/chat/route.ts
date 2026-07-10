@@ -7,7 +7,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
 export async function POST(req: NextRequest) {
   try {
-    const { question, sessionId } = await req.json();
+    const { question, sessionId, history } = await req.json();
 
     if (!question || !sessionId) {
       return NextResponse.json(
@@ -79,16 +79,20 @@ export async function POST(req: NextRequest) {
       .join("\n\n");
 
     // 6. build the prompt
-    const prompt = `You are a helpful assistant that answers questions based strictly on the provided document context.
+    const systemMessage = {
+      role: "system" as const,
+      content: `You are a helpful assistant that answers questions based strictly on the provided document context.
 If the answer is not in the context, say "I couldn't find that information in the document."
 Do not make up information. Be concise and clear.
 
 Context from document:
-${context}
+${context}`,
+    };
 
-Question: ${question}
-
-Answer:`;
+    const historyMessages = (history ?? []).map((m: any) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
 
     // 7. create a ReadableStream to send tokens as they arrive
 
@@ -114,7 +118,11 @@ Answer:`;
         // but it send token usage in last chunk
         const completion = await groq.chat.completions.create({
           model: "llama-3.1-8b-instant",
-          messages: [{ role: "user", content: prompt }],
+          messages: [
+            systemMessage,
+            ...historyMessages,
+            { role: "user", content: question },
+          ],
           max_tokens: 1024,
           temperature: 0.3,
           stream: true,

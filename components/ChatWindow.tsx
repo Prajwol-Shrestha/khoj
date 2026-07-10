@@ -163,12 +163,17 @@ export default function ChatWindow({
       if (textareaRef.current) textareaRef.current.style.height = "auto";
 
       try {
+        const history = messages
+          .filter((m) => !m.pending && !m.error)
+          .slice(-10) // latest 10 message only
+          .map((m) => ({ role: m.role, content: m.content }));
+
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, sessionId }),
+          body: JSON.stringify({ question, sessionId, history }),
         });
-        
+
         if (!res.ok) {
           const data = (await res.json()) as ChatApiResponse | ApiError;
           throw new Error(
