@@ -109,6 +109,26 @@ export default function Home() {
                 >
                   Dashboard
                 </a>
+                {user.user_metadata?.avatar_url ||
+                user.user_metadata?.picture ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      user.user_metadata?.avatar_url ??
+                      user.user_metadata?.picture
+                    }
+                    alt={user.user_metadata?.full_name ?? user.email ?? ""}
+                    className="h-8 w-8 rounded-lg border border-line-bright object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-green/30 bg-green/10 font-mono text-xs font-semibold text-green">
+                    {(user.user_metadata?.full_name ?? user.email ?? "?")
+                      .trim()
+                      .charAt(0)
+                      .toUpperCase()}
+                  </span>
+                )}
                 <SignOutButton />
               </div>
             ) : (

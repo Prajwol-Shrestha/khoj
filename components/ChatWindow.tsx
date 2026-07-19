@@ -79,6 +79,11 @@ export default function ChatWindow({
       try {
         const supabase = createClient();
 
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        console.log("auth session:", session?.user?.id ?? "no session");
+
         const docRes = await supabase
           .from("documents")
           .select("title, file_name, status, page_count, chunk_count")
