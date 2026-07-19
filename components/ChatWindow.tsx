@@ -68,6 +68,7 @@ export default function ChatWindow({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [ready, setReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -79,18 +80,25 @@ export default function ChatWindow({
       try {
         const supabase = createClient();
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        console.log("auth session:", session?.user?.id ?? "no session");
-
+        // fetch document metadata
         const docRes = await supabase
           .from("documents")
           .select("title, file_name, status, page_count, chunk_count")
           .eq("id", docId)
           .maybeSingle();
+
+        if (docRes.error) {
+          if (!cancelled) {
+            setInitError(
+              "Failed to load document. You may not have access to this document.",
+            );
+          }
+          return;
+        }
+
         if (!cancelled && docRes.data) setDoc(docRes.data as DocMeta);
 
+        // resolve session id
         let sid = initialSessionId;
         if (!sid) {
           const sRes = await supabase
@@ -98,28 +106,37 @@ export default function ChatWindow({
             .select("id")
             .eq("document_id", docId)
             .limit(1);
+
+          if (sRes.error) {
+            if (!cancelled) setInitError("Failed to load chat session.");
+            return;
+          }
+
           sid = (sRes.data as { id: string }[] | null)?.[0]?.id;
         }
+
         if (!cancelled) setSessionId(sid);
 
+        // fetch message history — non-fatal if this fails
         if (sid) {
-          let mRes = await supabase
+          const mRes = await supabase
             .from("messages")
             .select("*")
             .eq("session_id", sid)
             .order("created_at", { ascending: true });
+
           if (mRes.error) {
-            mRes = await supabase
-              .from("messages")
-              .select("*")
-              .eq("session_id", sid);
-          }
-          if (!cancelled && mRes.data) {
+            // don't block the whole page for history failures
+            // user can still chat, they just won't see past messages
+            console.error("Failed to load message history:", mRes.error);
+          } else if (!cancelled && mRes.data) {
             setMessages((mRes.data as MessageRow[]).map(rowToMessage));
           }
         }
       } catch {
-        if (!cancelled && initialSessionId) setSessionId(initialSessionId);
+        if (!cancelled) {
+          setInitError("Something went wrong loading this document.");
+        }
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -170,7 +187,7 @@ export default function ChatWindow({
       try {
         const history = messages
           .filter((m) => !m.pending && !m.error)
-          .slice(-10) // latest 10 message only
+          .slice(-10)
           .map((m) => ({ role: m.role, content: m.content }));
 
         const res = await fetch("/api/chat", {
@@ -189,7 +206,7 @@ export default function ChatWindow({
 
         const contentType = res.headers.get("Content-Type") ?? "";
 
-        // non-streaming
+        // non-streaming fallback
         if (!contentType.includes("text/event-stream")) {
           const data = await res.json();
           setMessages((m) =>
@@ -209,9 +226,7 @@ export default function ChatWindow({
 
         // streaming
         const reader = res.body?.getReader();
-        if (!reader) {
-          throw new Error("Failed to get reader");
-        }
+        if (!reader) throw new Error("Failed to get stream reader");
 
         const decoder = new TextDecoder();
         let buffer = "";
@@ -219,17 +234,17 @@ export default function ChatWindow({
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n\n");
-          buffer = lines.pop() ?? ""; // keep incomplete chunk in buffer
+          buffer = lines.pop() ?? "";
 
           for (const line of lines) {
-            if (!line.startsWith("data: ")) continue; // skip invalid lines
+            if (!line.startsWith("data: ")) continue;
             try {
               const event = JSON.parse(line.slice(6));
 
               if (event.type === "sources") {
-                // source arrive first
                 setMessages((m) =>
                   m.map((msg) =>
                     msg.id === pendingId
@@ -238,8 +253,8 @@ export default function ChatWindow({
                   ),
                 );
               }
+
               if (event.type === "token") {
-                // append each token to the message content
                 setMessages((m) =>
                   m.map((msg) =>
                     msg.id === pendingId
@@ -253,11 +268,9 @@ export default function ChatWindow({
                 );
               }
 
-              if (event.type === "done") {
-                break;
-              }
+              if (event.type === "done") break;
             } catch (err) {
-              console.error("Stream Parse error", err);
+              console.error("Stream parse error:", err);
             }
           }
         }
@@ -269,12 +282,7 @@ export default function ChatWindow({
         setMessages((m) =>
           m.map((msg) =>
             msg.id === pendingId
-              ? {
-                  id: pendingId,
-                  role: "assistant",
-                  content: message,
-                  error: true,
-                }
+              ? { id: pendingId, role: "assistant", content: message, error: true }
               : msg,
           ),
         );
@@ -282,7 +290,7 @@ export default function ChatWindow({
         setSending(false);
       }
     },
-    [sessionId, sending],
+    [sessionId, sending, messages],
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -299,10 +307,11 @@ export default function ChatWindow({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   };
 
-  const showEmpty = ready && messages.length === 0;
+  const showEmpty = ready && messages.length === 0 && !initError;
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
+      {/* header */}
       <header className="z-20 shrink-0 border-b border-line bg-void/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
           <Link
@@ -345,6 +354,23 @@ export default function ChatWindow({
         </div>
       </header>
 
+      {/* error banner — shown when document or session fails to load */}
+      {initError && (
+        <div className="shrink-0 border-b border-red/30 bg-red/5 px-4 py-3">
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <span className="text-sm text-red">⚠</span>
+            <p className="flex-1 text-sm text-red/80">{initError}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="text-xs text-muted underline underline-offset-4 transition-colors hover:text-ink"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* message area */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 py-6">
           {showEmpty ? (
@@ -383,6 +409,7 @@ export default function ChatWindow({
         </div>
       </div>
 
+      {/* input */}
       <div className="shrink-0 border-t border-line bg-void/80 backdrop-blur">
         <div className="mx-auto max-w-3xl px-4 py-4">
           <div className="flex items-end gap-2 rounded-2xl border border-line-bright bg-panel px-3 py-2 transition-colors focus-within:border-green/50">
@@ -394,12 +421,13 @@ export default function ChatWindow({
               onKeyDown={onKeyDown}
               rows={1}
               placeholder="Ask about this document…"
-              className="max-h-40 flex-1 resize-none bg-transparent py-2 text-[15px] text-ink placeholder:text-faint focus:outline-none"
+              disabled={!!initError}
+              className="max-h-40 flex-1 resize-none bg-transparent py-2 text-[15px] text-ink placeholder:text-faint focus:outline-none disabled:opacity-50"
             />
             <button
               type="button"
               onClick={() => send(input)}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || !!initError}
               className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-green text-void transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:bg-line-bright disabled:text-faint"
               aria-label="Send question"
             >
