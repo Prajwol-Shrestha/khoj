@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import { useState } from "react";
 
 export default function LoginPage() {
@@ -53,9 +54,9 @@ export default function LoginPage() {
 
         <p className="mt-6 text-center text-xs text-muted">
           No account needed to try Khoj.{" "}
-          <a href="/" className="text-green underline underline-offset-4">
+          <Link href="/" className="text-green underline underline-offset-4">
             Upload a PDF as guest
-          </a>
+          </Link>
         </p>
       </div>
     </div>

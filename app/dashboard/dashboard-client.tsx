@@ -8,6 +8,7 @@ import {
 } from "@/components/Icons";
 import { SignOutButton } from "@/components/SignOutButton";
 import StatusDot from "@/components/StatusDot";
+import UserAvatar from "@/components/UserAvatar";
 import type { DocumentRow } from "@/lib/types";
 import Link from "next/link";
 import { useState } from "react";
@@ -25,30 +26,6 @@ function formatDate(iso: string | null | undefined) {
     day: "numeric",
     year: "numeric",
   });
-}
-
-function initial(user: { email: string; name: string }) {
-  const source = user.name || user.email || "?";
-  return source.trim().charAt(0).toUpperCase();
-}
-
-function UserAvatar({ user }: { user: Props["user"] }) {
-  if (user.avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={user.avatarUrl}
-        alt={user.name || user.email}
-        className="h-8 w-8 rounded-lg border border-line-bright object-cover"
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-  return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-green/30 bg-green/10 font-mono text-xs font-semibold text-green">
-      {initial(user)}
-    </span>
-  );
 }
 
 export default function DashboardClient({
@@ -95,7 +72,7 @@ export default function DashboardClient({
             </span>
 
             <div className="flex items-center gap-3">
-              <UserAvatar user={user} />
+              <UserAvatar name={user.name} email={user.email} avatarUrl={user.avatarUrl} />
               <span className="hidden text-sm text-muted sm:block">
                 {user.name || user.email}
               </span>

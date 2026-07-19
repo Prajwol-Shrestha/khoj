@@ -1,9 +1,20 @@
 import { embedQuery } from "@/lib/gemini";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Role, SourceChunkData } from "@/lib/types";
 import Groq from "groq-sdk";
+import type { CompletionUsage } from "groq-sdk/resources/completions";
 import { NextRequest, NextResponse } from "next/server";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+
+interface MatchedChunk extends SourceChunkData {
+  id: string;
+}
+
+interface HistoryMessage {
+  role: Role;
+  content: string;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -53,8 +64,8 @@ export async function POST(req: NextRequest) {
 
     // filter out chunks that aren't actually relevant
     const SIMILARITY_THRESHOLD = 0.5;
-    const relevantChunks = (chunks ?? []).filter(
-      (c: any) => c.similarity >= SIMILARITY_THRESHOLD,
+    const relevantChunks = (chunks as MatchedChunk[] ?? []).filter(
+      (c) => c.similarity >= SIMILARITY_THRESHOLD,
     );
 
     if (relevantChunks.length === 0) {
@@ -75,7 +86,7 @@ export async function POST(req: NextRequest) {
 
     // 5. build context from relevantChunks
     const context = relevantChunks
-      .map((c: any, i: number) => `[Chunk ${i + 1}]:\n${c.content}`)
+      .map((c, i) => `[Chunk ${i + 1}]:\n${c.content}`)
       .join("\n\n");
 
     // 6. build the prompt
@@ -89,14 +100,16 @@ Context from document:
 ${context}`,
     };
 
-    const historyMessages = (history ?? []).map((m: any) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+    const historyMessages: HistoryMessage[] = (history ?? []).map(
+      (m: HistoryMessage) => ({
+        role: m.role,
+        content: m.content,
+      }),
+    );
 
     // 7. create a ReadableStream to send tokens as they arrive
 
-    const sources = relevantChunks.map((c: any) => ({
+    const sources: SourceChunkData[] = relevantChunks.map((c) => ({
       content: c.content,
       similarity: Math.round(c.similarity * 100) / 100,
     }));
@@ -145,7 +158,7 @@ ${context}`,
 
           // Usage is only present on the LAST chunk
           if ("usage" in chunk && chunk.usage) {
-            tokensUsed = (chunk.usage as any)?.total_tokens;
+            tokensUsed = (chunk.usage as CompletionUsage).total_tokens;
           }
         }
 
@@ -154,7 +167,7 @@ ${context}`,
           session_id: sessionId,
           role: "assistant",
           content: fullAnswer,
-          source_chunks: relevantChunks.map((c: any) => ({
+          source_chunks: relevantChunks.map((c) => ({
             id: c.id,
             content: c.content,
             similarity: c.similarity,

@@ -14,6 +14,12 @@ export function rateLimit(
 ): boolean {
   const ip = req.headers.get("x-forwarded-for") ?? "unknown";
   const now = Date.now();
+
+  // prune stale IPs so this map doesn't grow forever
+  for (const [key, timestamps] of requests) {
+    if (timestamps.every((t) => now - t >= windowMs)) requests.delete(key);
+  }
+
   const timestamps = (requests.get(ip) ?? []).filter((t) => now - t < windowMs);
   timestamps.push(now);
   requests.set(ip, timestamps);
