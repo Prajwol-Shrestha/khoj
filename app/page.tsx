@@ -2,46 +2,64 @@
 
 import DocumentCard from "@/components/DocumentCard";
 import { ScanIcon } from "@/components/Icons";
+import { SignOutButton } from "@/components/SignOutButton";
 import UploadDropzone from "@/components/UploadDropzone";
 import { getGuestToken } from "@/lib/guest";
 import { createClient } from "@/lib/supabase/client";
 import type { ChatSessionRow, DocumentRow } from "@/lib/types";
+import { User } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 
 export default function Home() {
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [sessions, setSessions] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const token = getGuestToken();
-        if (!token) return;
-
         const supabase = createClient();
 
-        const { data: docs, error: docsError } = await supabase
+        // check if user is logged in
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        let docsQuery = supabase
           .from("documents")
           .select("*")
-          .eq("session_token", token)
           .order("created_at", { ascending: false })
           .limit(9);
 
-        if (docsError) {
-          console.error("Failed to fetch documents:", docsError);
-        }
-
-        const { data: sessData, error: sessError } = await supabase
+        let sessQuery = supabase
           .from("chat_sessions")
-          .select("id, document_id")
-          .eq("session_token", token);  // session_token for guest user - like temp id
+          .select("id, document_id");
 
-        if (sessError) {
-          console.error("Failed to fetch sessions:", sessError);
+        if (user) {
+          // logged in — fetch by user_id
+          docsQuery = docsQuery.eq("user_id", user.id);
+          sessQuery = sessQuery.eq("user_id", user.id);
+        } else {
+          // guest — fetch by session_token
+          const token = getGuestToken();
+          if (!token) return;
+          docsQuery = docsQuery.eq("session_token", token);
+          sessQuery = sessQuery.eq("session_token", token);
         }
+
+        const { data: docs, error: docsError } = await docsQuery;
+        if (docsError) console.error("Failed to fetch documents:", docsError);
+
+        const { data: sessData, error: sessError } = await sessQuery;
+        if (sessError) console.error("Failed to fetch sessions:", sessError);
 
         if (cancelled) return;
 
@@ -73,13 +91,35 @@ export default function Home() {
             <ScanIcon size={16} className="text-green" />
             khoj<span className="caret">_</span>
           </span>
-          <span className="mono-label hidden items-center gap-2 sm:flex">
-            <span
-              className="inline-block h-1.5 w-1.5 rounded-full bg-green"
-              style={{ boxShadow: "0 0 8px var(--green)" }}
-            />
-            online · llama-3.1 · gemini-embed
-          </span>
+
+          <div className="flex items-center gap-4">
+            <span className="mono-label hidden items-center gap-2 sm:flex">
+              <span
+                className="inline-block h-1.5 w-1.5 rounded-full bg-green"
+                style={{ boxShadow: "0 0 8px var(--green)" }}
+              />
+              online · llama-3.1 · gemini-embed
+            </span>
+
+            {user ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href="/dashboard"
+                  className="text-sm text-muted transition-colors hover:text-ink"
+                >
+                  Dashboard
+                </a>
+                <SignOutButton />
+              </div>
+            ) : (
+              <a
+                href="/login"
+                className="rounded-lg border border-line-bright bg-panel-2 px-3 py-1.5 text-sm text-muted transition-colors hover:border-green/50 hover:text-green"
+              >
+                Sign in
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
@@ -109,7 +149,9 @@ export default function Home() {
           </div>
 
           <p className="mono-label mt-6 text-center">
-            documents stay scoped to this browser
+            {user
+              ? "documents saved to your account"
+              : "documents stay scoped to this browser · sign in to save permanently"}
           </p>
         </section>
 

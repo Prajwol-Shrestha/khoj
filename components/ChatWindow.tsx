@@ -329,11 +329,11 @@ export default function ChatWindow({
             <div className="hidden items-center gap-3 sm:flex">
               <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
                 <PagesIcon size={13} />
-                {doc.page_count ?? "—"}p
+                {doc.page_count ?? "—"} pages
               </span>
               <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
                 <LayersIcon size={13} />
-                {doc.chunk_count ?? "—"}c
+                {doc.chunk_count ?? "—"} chunks
               </span>
             </div>
           )}
