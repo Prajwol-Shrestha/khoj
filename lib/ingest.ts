@@ -42,35 +42,44 @@ export async function ingestFile(
     `${Date.now()}-${file.name.replace(/\s+/g, "-")}`,
   ].join("/");
 
-  const { error: storageError } = await supabase.storage
+  const title = titleFromFileName(file.name);
+  const fileUrl = supabase.storage.from("documents").getPublicUrl(storagePath).data.publicUrl;
+
+  const uploadPromise = supabase.storage
     .from("documents")
     .upload(storagePath, buffer, { contentType: mimeType });
-  if (storageError) {
-    throw new Error(`${file.name}: storage error — ${storageError.message}`);
-  }
 
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from("documents").getPublicUrl(storagePath);
-
-  const title = titleFromFileName(file.name);
-  const { data: document, error: docError } = await supabase
+  const insertPromise = supabase
     .from("documents")
     .insert({
       ...ownerColumns(owner),
       title,
       file_name: file.name,
-      file_url: publicUrl,
+      file_url: fileUrl,
       status: "processing",
     })
     .select("id")
     .single();
-  if (docError) {
-    throw new Error(`${file.name}: ${docError.message}`);
+
+  const extractPromise = extractText(buffer, mimeType);
+
+  const [uploadResult, insertResult, extractResult] = await Promise.all([
+    uploadPromise,
+    insertPromise,
+    extractPromise,
+  ]);
+
+  if (uploadResult.error) {
+    throw new Error(`${file.name}: storage error — ${uploadResult.error.message}`);
+  }
+  if (insertResult.error) {
+    throw new Error(`${file.name}: ${insertResult.error.message}`);
   }
 
+  const document = insertResult.data;
+
   try {
-    const { text, pageCount = 1 } = await extractText(buffer, mimeType);
+    const { text, pageCount = 1 } = extractResult;
     if (!text.trim()) {
       throw new Error(`Could not extract any text from ${file.name}`);
     }

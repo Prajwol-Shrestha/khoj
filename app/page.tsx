@@ -39,14 +39,15 @@ export default function Home() {
           .select("id, document_id");
 
         if (authUser) {
-          docsQuery = docsQuery.eq("user_id", authUser.id);
-          sessQuery = sessQuery.eq("user_id", authUser.id);
-        } else {
-          const token = getGuestToken();
-          if (!token) return;
-          docsQuery = docsQuery.eq("session_token", token);
-          sessQuery = sessQuery.eq("session_token", token);
+          setLoaded(true);
+          return;
         }
+
+        const token = getGuestToken();
+        if (!token) return;
+
+        docsQuery = docsQuery.eq("session_token", token);
+        sessQuery = sessQuery.eq("session_token", token);
 
         const { data: docRows, error: docsError } = await docsQuery;
         if (docsError) console.error("Failed to fetch documents:", docsError);
