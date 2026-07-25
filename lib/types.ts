@@ -13,6 +13,7 @@ export interface DocumentRow {
   created_at?: string | null;
   session_token?: string | null;
   user_id?: string | null;
+  pinned: boolean;
 }
 
 export interface CollectionRow {
@@ -21,6 +22,7 @@ export interface CollectionRow {
   session_token: string | null;
   title: string;
   created_at: string | null;
+  pinned: boolean;
 }
 export interface ChatSessionRow {
   id: string;

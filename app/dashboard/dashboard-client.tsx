@@ -35,8 +35,20 @@ export default function DashboardClient({
   const [docs, setDocs] = useState<DocumentRow[]>(documents);
   const [cols, setCols] = useState<CollectionRow[]>(collections);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
 
   const isEmpty = docs.length === 0 && cols.length === 0;
+
+  const sortedDocs = [...docs].sort((a, b) => {
+    if (a.pinned === b.pinned) return 0;
+    return a.pinned ? -1 : 1;
+  });
+
+  const sortedCols = [...cols].sort((a, b) => {
+    if (a.pinned === b.pinned) return 0;
+    return a.pinned ? -1 : 1;
+  });
 
   async function deleteDocument(id: string) {
     if (!confirm("Delete this document and its chat history?")) return;
@@ -54,6 +66,54 @@ export default function DashboardClient({
     if (res.ok) setCols((c) => c.filter((col) => col.id !== id));
     else alert("Failed to delete collection. Please try again.");
     setDeleting(null);
+  }
+
+  async function renameDocument(id: string, title: string) {
+    const res = await fetch(`/api/documents/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (res.ok) {
+      setDocs((d) => d.map((doc) => (doc.id === id ? { ...doc, title } : doc)));
+    }
+  }
+
+  async function renameCollection(id: string, title: string) {
+    const res = await fetch(`/api/collections/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (res.ok) {
+      setCols((c) => c.map((col) => (col.id === id ? { ...col, title } : col)));
+    }
+  }
+
+  async function togglePinDocument(id: string, pinned: boolean) {
+    const res = await fetch(`/api/documents/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned: !pinned }),
+    });
+    if (res.ok) {
+      setDocs((d) =>
+        d.map((doc) => (doc.id === id ? { ...doc, pinned: !pinned } : doc)),
+      );
+    }
+  }
+
+  async function togglePinCollection(id: string, pinned: boolean) {
+    const res = await fetch(`/api/collections/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned: !pinned }),
+    });
+    if (res.ok) {
+      setCols((c) =>
+        c.map((col) => (col.id === id ? { ...col, pinned: !pinned } : col)),
+      );
+    }
   }
 
   return (
@@ -149,7 +209,7 @@ export default function DashboardClient({
         )}
 
         {/* document grid */}
-        {docs.length > 0 && (
+        {sortedDocs.length > 0 && (
           <div
             className="mt-8 animate-fade-up"
             style={{ animationDelay: "80ms" }}
@@ -163,7 +223,7 @@ export default function DashboardClient({
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {docs.map((doc) => {
+              {sortedDocs.map((doc) => {
                 const sessionId = sessionMap[doc.id];
                 const href = sessionId
                   ? `/chat/${doc.id}?session=${sessionId}`
@@ -181,6 +241,14 @@ export default function DashboardClient({
                       <div className="flex items-center gap-3">
                         <StatusDot status={doc.status} />
                         <button
+                          onClick={() => togglePinDocument(doc.id, doc.pinned)}
+                          className={`text-faint opacity-0 transition-all hover:text-green group-hover:opacity-100 ${doc.pinned ? "opacity-100 text-green" : ""}`}
+                          aria-label={doc.pinned ? "Unpin" : "Pin"}
+                          title={doc.pinned ? "Unpin" : "Pin to top"}
+                        >
+                          {doc.pinned ? "★" : "☆"}
+                        </button>
+                        <button
                           onClick={() => deleteDocument(doc.id)}
                           disabled={deleting === doc.id}
                           className="cursor-pointer text-faint opacity-0 transition-opacity hover:text-red disabled:opacity-50 group-hover:opacity-100"
@@ -190,11 +258,39 @@ export default function DashboardClient({
                         </button>
                       </div>
                     </div>
-
                     <div className="min-w-0">
-                      <h3 className="truncate text-sm font-medium text-ink group-hover:text-green">
-                        {doc.title || doc.file_name}
-                      </h3>
+                      {editingId === doc.id ? (
+                        <input
+                          autoFocus
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={async () => {
+                            if (
+                              editingTitle.trim() &&
+                              editingTitle !== doc.title
+                            ) {
+                              await renameDocument(doc.id, editingTitle.trim());
+                            }
+                            setEditingId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingId(null);
+                          }}
+                          className="w-full bg-transparent text-sm font-medium text-ink outline-none border-b border-green pb-0.5"
+                        />
+                      ) : (
+                        <h3
+                          className="truncate text-sm font-medium text-ink group-hover:text-green cursor-text"
+                          onDoubleClick={() => {
+                            setEditingId(doc.id);
+                            setEditingTitle(doc.title || doc.file_name);
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {doc.title || doc.file_name}
+                        </h3>
+                      )}
                       <p className="mono-label mt-1 truncate">
                         {doc.file_name}
                       </p>
@@ -244,7 +340,7 @@ export default function DashboardClient({
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {cols.map((col) => {
+              {sortedCols.map((col) => {
                 const sessionId = sessionMap[col.id];
                 const docCount = collectionDocCounts[col.id] ?? 0;
                 const href = sessionId
@@ -260,6 +356,14 @@ export default function DashboardClient({
                       <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-line-bright bg-panel-2 text-muted transition-colors group-hover:text-green">
                         <LayersIcon size={16} />
                       </span>
+                      <button
+                        onClick={() => togglePinCollection(col.id, col.pinned)}
+                        className={`text-faint opacity-0 transition-all hover:text-green group-hover:opacity-100 ${col.pinned ? "opacity-100 text-green" : ""}`}
+                        aria-label={col.pinned ? "Unpin" : "Pin"}
+                        title={col.pinned ? "Unpin" : "Pin to top"}
+                      >
+                        {col.pinned ? "★" : "☆"}
+                      </button>
                       <div className="flex items-center gap-3">
                         <span className="font-mono text-xs text-green">
                           collection
@@ -276,12 +380,38 @@ export default function DashboardClient({
                     </div>
 
                     <div className="min-w-0">
-                      <h3 className="truncate text-sm font-medium text-ink group-hover:text-green">
-                        {col.title}
-                      </h3>
-                      <p className="mono-label mt-1">
-                        {docCount} document{docCount === 1 ? "" : "s"}
-                      </p>
+                      {editingId === col.id ? (
+                        <input
+                          autoFocus
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={async () => {
+                            if (
+                              editingTitle.trim() &&
+                              editingTitle !== col.title
+                            ) {
+                              await renameCollection(col.id, editingTitle.trim());
+                            }
+                            setEditingId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingId(null);
+                          }}
+                          className="w-full bg-transparent text-sm font-medium text-ink outline-none border-b border-green pb-0.5"
+                        />
+                      ) : (
+                        <h3
+                          className="truncate text-sm font-medium text-ink group-hover:text-green cursor-text"
+                          onDoubleClick={() => {
+                            setEditingId(col.id);
+                            setEditingTitle(col.title);
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {col.title}
+                        </h3>
+                      )}
                     </div>
 
                     <div className="mt-auto flex items-center border-t border-line pt-3">
