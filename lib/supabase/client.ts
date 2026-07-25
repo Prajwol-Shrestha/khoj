@@ -1,8 +1,8 @@
-import { createBrowserClient } from '@supabase/ssr'
-import { getGuestToken } from '@/lib/guest'
+import { createBrowserClient } from "@supabase/ssr";
+import { getGuestToken } from "@/lib/guest";
 
 export function createClient() {
-  const token = typeof window !== 'undefined' ? getGuestToken() : ''
+  const token = typeof window !== "undefined" ? getGuestToken() : "";
 
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,9 +10,9 @@ export function createClient() {
     {
       global: {
         headers: {
-          'x-session-token': token,
+          "x-session-token": token,
         },
       },
-    }
-  )
+    },
+  );
 }

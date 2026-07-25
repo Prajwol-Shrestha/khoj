@@ -7,7 +7,10 @@ interface MatchMeterProps {
   segments?: number;
 }
 
-export default function MatchMeter({ similarity, segments = 10 }: MatchMeterProps) {
+export default function MatchMeter({
+  similarity,
+  segments = 10,
+}: MatchMeterProps) {
   const clamped = Math.max(0, Math.min(1, similarity));
   const filled = Math.max(1, Math.round(clamped * segments));
   const [lit, setLit] = useState(0);

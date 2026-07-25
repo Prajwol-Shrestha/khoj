@@ -7,153 +7,76 @@ import {
   SpinnerIcon,
   UploadIcon,
 } from "@/components/Icons";
-import { getGuestToken } from "@/lib/guest";
-import { useRouter } from "next/navigation";
+import { useUpload } from "@/hooks/useUpload";
+import {
+  checkFile,
+  FILE_INPUT_ACCEPT,
+  MAX_FILES_PER_UPLOAD,
+} from "@/lib/files";
+import { formatBytes } from "@/lib/format";
 import { useCallback, useRef, useState } from "react";
 
-type Phase = "idle" | "sending" | "processing" | "error";
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const SUPPORTED_TYPES = [
-  "application/pdf",
-  "text/plain",
-  "text/markdown",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-];
-
 export default function UploadDropzone() {
-  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-
   const [dragging, setDragging] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [progress, setProgress] = useState(0);
-  const [activeFiles, setActiveFiles] = useState<File[]>([]);
-  const [error, setError] = useState<string>("");
+  const { phase, progress, files, error, start, reset } = useUpload();
 
-  const upload = useCallback(
-    (files: File[]) => {
-      setActiveFiles(files);
-      setError("");
-      setProgress(0);
-      setPhase("sending");
+  // rejected files never reach the hook, so they carry their own error state
+  const [rejected, setRejected] = useState<{
+    files: File[];
+    message: string;
+  } | null>(null);
 
-      const form = new FormData();
-      const isCollection = files.length > 1;
-
-      if (isCollection) {
-        files.forEach((f) => form.append("files", f));
-      } else {
-        form.append("file", files[0]);
-      }
-      form.append("sessionToken", getGuestToken());
-
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", isCollection ? "/api/upload-collection" : "/api/upload");
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          setProgress(Math.round((e.loaded / e.total) * 100));
-        }
-      };
-
-      xhr.upload.onload = () => {
-        setProgress(100);
-        setPhase("processing");
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            console.log(
-              "redirect url:",
-              `/chat/${isCollection ? data.collectionId : data.documentId}?session=${data.sessionId}`,
-            );
-            console.log("full response:", data);
-            router.push(
-              `/chat/${isCollection ? data.collectionId : data.documentId}?session=${data.sessionId}`,
-            );
-            return;
-          } catch {
-            setError("Upload finished but response could not be read.");
-            setPhase("error");
-            return;
-          }
-        }
-        let message = "Upload failed. Please try again.";
-        try {
-          const data = JSON.parse(xhr.responseText);
-          if (data.error) message = data.error;
-        } catch {
-          /* keep default */
-        }
-        setError(message);
-        setPhase("error");
-      };
-
-      xhr.onerror = () => {
-        setError("Network error. Check your connection and try again.");
-        setPhase("error");
-      };
-
-      xhr.send(form);
-    },
-    [router],
-  );
   const handleFiles = useCallback(
-    (files: FileList | null) => {
-      if (!files || files.length === 0) return;
+    (picked: FileList | null) => {
+      if (!picked || picked.length === 0) return;
+      const selected = Array.from(picked);
 
-      if (files.length > 3) {
-        setError("Maximum 3 files allowed per chat session.");
-        setPhase("error");
+      if (selected.length > MAX_FILES_PER_UPLOAD) {
+        setRejected({
+          files: selected,
+          message: `Maximum ${MAX_FILES_PER_UPLOAD} files allowed per chat session.`,
+        });
         return;
       }
 
-      // validate all files
-      const fileArray = Array.from(files);
-      for (const file of fileArray) {
-        if (!SUPPORTED_TYPES.includes(file.type)) {
-          setActiveFiles([file]);
-          setError(`${file.name}: Supported formats are PDF, TXT, MD, DOCX`);
-          setPhase("error");
+      for (const file of selected) {
+        const problem = checkFile(file);
+        if (problem) {
+          setRejected({ files: [file], message: problem });
           return;
         }
       }
 
-      upload(fileArray);
+      setRejected(null);
+      start(selected);
     },
-    [upload],
+    [start],
   );
 
-  const reset = useCallback(() => {
-    setPhase("idle");
-    setActiveFiles([]);
-    setError("");
-    setProgress(0);
+  const dismiss = useCallback(() => {
+    setRejected(null);
+    reset();
     if (inputRef.current) inputRef.current.value = "";
-  }, []);
+  }, [reset]);
 
   const busy = phase === "sending" || phase === "processing";
+  const failed = rejected !== null || phase === "error";
+  const shownFiles = rejected?.files ?? files;
+  const shownError = rejected?.message ?? error;
 
   return (
     <div className="w-full">
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept={FILE_INPUT_ACCEPT}
         multiple
         className="sr-only"
         onChange={(e) => handleFiles(e.target.files)}
       />
 
-      {phase === "idle" && (
+      {!busy && !failed && (
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
@@ -191,17 +114,17 @@ export default function UploadDropzone() {
               <span className="text-green underline underline-offset-4">
                 browse files
               </span>{" "}
-              — up to 3 files
+              — up to {MAX_FILES_PER_UPLOAD} files
             </span>
           </span>
           <span className="mono-label">pdf · txt · md · docx</span>{" "}
         </button>
       )}
 
-      {busy && activeFiles && (
+      {busy && (
         <div className="rounded-2xl border border-line-bright bg-panel/70 px-6 py-6">
           <div className="space-y-2">
-            {activeFiles.map((f, i) => (
+            {files.map((f, i) => (
               <div key={i} className="flex items-center gap-2">
                 <FileIcon size={14} className="text-green shrink-0" />
                 <p className="truncate text-sm text-ink">{f.name}</p>
@@ -244,7 +167,7 @@ export default function UploadDropzone() {
         </div>
       )}
 
-      {phase === "error" && (
+      {failed && (
         <div className="rounded-2xl border border-red/40 bg-red/5 px-6 py-6">
           <div className="flex items-start gap-3">
             <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-red/40 bg-red/10 text-red">
@@ -254,16 +177,16 @@ export default function UploadDropzone() {
               <p className="text-sm font-medium text-ink">
                 Couldn&apos;t process that file
               </p>
-              <p className="mt-1 text-sm text-muted">{error}</p>
-              {activeFiles && (
+              <p className="mt-1 text-sm text-muted">{shownError}</p>
+              {shownFiles.length > 0 && (
                 <p className="mono-label mt-2 truncate">
-                  {activeFiles.map((f) => f.name).join(", ")}
+                  {shownFiles.map((f) => f.name).join(", ")}
                 </p>
               )}
             </div>
             <button
               type="button"
-              onClick={reset}
+              onClick={dismiss}
               className="text-muted transition-colors hover:text-ink"
               aria-label="Dismiss error"
             >
@@ -272,7 +195,7 @@ export default function UploadDropzone() {
           </div>
           <button
             type="button"
-            onClick={reset}
+            onClick={dismiss}
             className="mt-4 inline-flex items-center gap-2 rounded-lg border border-line-bright bg-panel-2 px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-green/60 hover:text-green"
           >
             Try another file

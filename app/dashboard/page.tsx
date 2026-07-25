@@ -12,45 +12,50 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   const admin = createAdminClient();
-  const [
-    { data: allDocuments },
-    { data: collectionDocs },
-    { data: collections },
-    { data: sessions },
-  ] = await Promise.all([
-    admin
-      .from("documents")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
-    admin.from("collection_documents").select("document_id, collection_id"),
-    admin
-      .from("collections")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
-    admin
-      .from("chat_sessions")
-      .select("id, document_id, collection_id")
-      .eq("user_id", user.id),
-  ]);
+  const [{ data: allDocuments }, { data: collections }, { data: sessions }] =
+    await Promise.all([
+      admin
+        .from("documents")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      admin
+        .from("collections")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      admin
+        .from("chat_sessions")
+        .select("id, document_id, collection_id")
+        .eq("user_id", user.id),
+    ]);
 
-  // filter standalone documents (not part of any collection)
+  const collectionIds = (collections ?? []).map((c) => c.id);
+
+  let collectionDocs: { document_id: string; collection_id: string }[] = [];
+  if (collectionIds.length > 0) {
+    const { data } = await admin
+      .from("collection_documents")
+      .select("document_id, collection_id")
+      .in("collection_id", collectionIds);
+    collectionDocs = data ?? [];
+  }
+
+  // a document is standalone only while no collection owns it
   const collectionDocIdSet = new Set(
-    (collectionDocs ?? []).map((cd) => cd.document_id),
+    collectionDocs.map((cd) => cd.document_id),
   );
   const documents = (allDocuments ?? []).filter(
     (doc) => !collectionDocIdSet.has(doc.id),
   );
 
-  // count documents per collection
   const collectionDocCounts: Record<string, number> = {};
-  (collectionDocs ?? []).forEach((cd) => {
+  collectionDocs.forEach((cd) => {
     collectionDocCounts[cd.collection_id] =
       (collectionDocCounts[cd.collection_id] ?? 0) + 1;
   });
 
-  // build session map (document_id or collection_id → session_id)
+  // keyed by document id or collection id — a session points at exactly one
   const sessionMap: Record<string, string> = {};
   (sessions ?? []).forEach((s) => {
     if (s.document_id) sessionMap[s.document_id] = s.id;
@@ -65,7 +70,7 @@ export default async function DashboardPage() {
         avatarUrl:
           user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? "",
       }}
-      documents={documents ?? []}
+      documents={documents}
       collections={collections ?? []}
       collectionDocCounts={collectionDocCounts}
       sessionMap={sessionMap}

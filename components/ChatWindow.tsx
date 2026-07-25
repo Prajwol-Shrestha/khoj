@@ -1,34 +1,16 @@
 "use client";
 
+import ChatComposer from "@/components/ChatComposer";
+import ChatHeader from "@/components/ChatHeader";
 import ChatMessage from "@/components/ChatMessage";
-import {
-  ArrowLeftIcon,
-  ArrowUpIcon,
-  LayersIcon,
-  PagesIcon,
-  ScanIcon,
-} from "@/components/Icons";
-import StatusDot from "@/components/StatusDot";
-import { createClient } from "@/lib/supabase/client";
-import type {
-  ApiError,
-  ChatApiResponse,
-  ChatMessage as ChatMessageType,
-  DocumentRow,
-  MessageRow,
-} from "@/lib/types";
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ScanIcon } from "@/components/Icons";
+import { useChat } from "@/hooks/useChat";
+import { useEffect, useRef } from "react";
 
 interface ChatWindowProps {
   id: string;
   initialSessionId?: string;
 }
-
-type DocMeta = Pick<
-  DocumentRow,
-  "title" | "file_name" | "status" | "page_count" | "chunk_count"
->;
 
 const STARTERS = [
   "Summarize this document",
@@ -36,347 +18,24 @@ const STARTERS = [
   "What conclusions does it reach?",
 ];
 
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `m-${Math.random().toString(36).slice(2)}`;
-}
-
-function rowToMessage(row: MessageRow): ChatMessageType {
-  return {
-    id: row.id,
-    role: row.role,
-    content: row.content,
-    sources:
-      row.role === "assistant" && row.source_chunks
-        ? row.source_chunks
-        : undefined,
-    tokensUsed: row.tokens_used ?? undefined,
-  };
-}
-
 export default function ChatWindow({ id, initialSessionId }: ChatWindowProps) {
-  const [sessionId, setSessionId] = useState<string | undefined>(
+  const { doc, messages, sending, ready, initError, send } = useChat(
+    id,
     initialSessionId,
   );
-  const [doc, setDoc] = useState<DocMeta | null>(null);
-  const [messages, setMessages] = useState<ChatMessageType[]>([]);
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [ready, setReady] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function init() {
-      try {
-        const supabase = createClient();
-
-        // resolve session id
-        let sid = initialSessionId;
-        if (!sid) {
-          const byDoc = await supabase
-            .from("chat_sessions")
-            .select("id, document_id, collection_id")
-            .eq("document_id", id)
-            .limit(1);
-
-          if (byDoc.data?.[0]) {
-            sid = byDoc.data[0].id;
-          } else {
-            const byCol = await supabase
-              .from("chat_sessions")
-              .select("id, document_id, collection_id")
-              .eq("collection_id", id)
-              .limit(1);
-            sid = byCol.data?.[0]?.id;
-          }
-        }
-
-        if (!cancelled) setSessionId(sid);
-
-        // fetch document or collection metadata
-        const docRes = await supabase
-          .from("documents")
-          .select("title, file_name, status, page_count, chunk_count")
-          .eq("id", id)
-          .maybeSingle();
-
-        if (docRes.error) {
-          if (!cancelled) setInitError("Failed to load document.");
-          return;
-        }
-
-        if (docRes.data) {
-          if (!cancelled) setDoc(docRes.data as DocMeta);
-        } else {
-          // it's a collection
-          const colRes = await supabase
-            .from("collections")
-            .select("title")
-            .eq("id", id)
-            .maybeSingle();
-
-          if (colRes.error) {
-            if (!cancelled) setInitError("Failed to load collection.");
-            return;
-          }
-
-          if (colRes.data && !cancelled) {
-            setDoc({
-              title: colRes.data.title,
-              file_name: "",
-              status: "ready",
-              page_count: null,
-              chunk_count: null,
-            });
-          }
-        }
-
-        // fetch message history
-        if (sid) {
-          const mRes = await supabase
-            .from("messages")
-            .select("*")
-            .eq("session_id", sid)
-            .order("created_at", { ascending: true });
-
-          if (mRes.error) {
-            console.error("Failed to load message history:", mRes.error);
-          } else if (!cancelled && mRes.data) {
-            setMessages((mRes.data as MessageRow[]).map(rowToMessage));
-          }
-        }
-      } catch {
-        if (!cancelled) setInitError("Something went wrong loading this page.");
-      } finally {
-        if (!cancelled) setReady(true); // ← this is what shows the empty state
-      }
-    }
-
-    init();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, initialSessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
-  const send = useCallback(
-    async (raw: string) => {
-      const question = raw.trim();
-      if (!question || sending) return;
-
-      if (!sessionId) {
-        setMessages((m) => [
-          ...m,
-          { id: newId(), role: "user", content: question },
-          {
-            id: newId(),
-            role: "assistant",
-            content:
-              "No active session for this document. Try re-uploading it.",
-            error: true,
-          },
-        ]);
-        setInput("");
-        return;
-      }
-
-      const pendingId = newId();
-      setMessages((m) => [
-        ...m,
-        { id: newId(), role: "user", content: question },
-        { id: pendingId, role: "assistant", content: "", pending: true },
-      ]);
-      setInput("");
-      setSending(true);
-
-      if (textareaRef.current) textareaRef.current.style.height = "auto";
-
-      try {
-        const history = messages
-          .filter((m) => !m.pending && !m.error)
-          .slice(-10)
-          .map((m) => ({ role: m.role, content: m.content }));
-
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, sessionId, history }),
-        });
-
-        if (!res.ok) {
-          const data = (await res.json()) as ChatApiResponse | ApiError;
-          throw new Error(
-            (data as ApiError).error ||
-              "Something went wrong retrieving an answer.",
-          );
-        }
-
-        const contentType = res.headers.get("Content-Type") ?? "";
-
-        // non-streaming fallback
-        if (!contentType.includes("text/event-stream")) {
-          const data = await res.json();
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === pendingId
-                ? {
-                    id: pendingId,
-                    role: "assistant",
-                    content: data.answer,
-                    sources: data.sources,
-                  }
-                : msg,
-            ),
-          );
-          return;
-        }
-
-        // streaming
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("Failed to get stream reader");
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-
-              if (event.type === "sources") {
-                setMessages((m) =>
-                  m.map((msg) =>
-                    msg.id === pendingId
-                      ? { ...msg, sources: event.sources }
-                      : msg,
-                  ),
-                );
-              }
-
-              if (event.type === "token") {
-                setMessages((m) =>
-                  m.map((msg) =>
-                    msg.id === pendingId
-                      ? {
-                          ...msg,
-                          content: msg.content + event.content,
-                          pending: false,
-                        }
-                      : msg,
-                  ),
-                );
-              }
-
-              if (event.type === "done") break;
-            } catch (err) {
-              console.error("Stream parse error:", err);
-            }
-          }
-        }
-      } catch (e) {
-        const message =
-          e instanceof Error
-            ? e.message
-            : "Something went wrong retrieving an answer.";
-        setMessages((m) =>
-          m.map((msg) =>
-            msg.id === pendingId
-              ? {
-                  id: pendingId,
-                  role: "assistant",
-                  content: message,
-                  error: true,
-                }
-              : msg,
-          ),
-        );
-      } finally {
-        setSending(false);
-      }
-    },
-    [sessionId, sending, messages],
-  );
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send(input);
-    }
-  };
-
-  const onInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    const el = e.target;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  };
-
   const showEmpty = ready && messages.length === 0 && !initError;
 
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden">
-      {/* header */}
-      <header className="z-20 shrink-0 border-b border-line bg-void/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
-          <Link
-            href="/"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-line-bright bg-panel-2 text-muted transition-colors hover:border-green/50 hover:text-green"
-            aria-label="Back to upload"
-          >
-            <ArrowLeftIcon size={16} />
-          </Link>
+      <ChatHeader doc={doc} />
 
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-green/30 bg-green/10 text-green">
-            <ScanIcon size={16} />
-          </span>
-
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-medium text-ink">
-              {doc?.title || doc?.file_name || "Document"}
-            </h1>
-            <div className="mt-0.5 flex items-center gap-3">
-              {doc ? (
-                <StatusDot status={doc.status} showLabel />
-              ) : (
-                <span className="mono-label">loading</span>
-              )}
-            </div>
-          </div>
-
-          {doc && (
-            <div className="hidden items-center gap-3 sm:flex">
-              <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
-                <PagesIcon size={13} />
-                {doc.page_count ?? "—"} pages
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
-                <LayersIcon size={13} />
-                {doc.chunk_count ?? "—"} chunks
-              </span>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {/* error banner — shown when document or session fails to load */}
       {initError && (
         <div className="shrink-0 border-b border-red/30 bg-red/5 px-4 py-3">
           <div className="mx-auto flex max-w-3xl items-center gap-3">
@@ -392,7 +51,6 @@ export default function ChatWindow({ id, initialSessionId }: ChatWindowProps) {
         </div>
       )}
 
-      {/* message area */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-4 py-6">
           {showEmpty ? (
@@ -431,36 +89,7 @@ export default function ChatWindow({ id, initialSessionId }: ChatWindowProps) {
         </div>
       </div>
 
-      {/* input */}
-      <div className="shrink-0 border-t border-line bg-void/80 backdrop-blur">
-        <div className="mx-auto max-w-3xl px-4 py-4">
-          <div className="flex items-end gap-2 rounded-2xl border border-line-bright bg-panel px-3 py-2 transition-colors focus-within:border-green/50">
-            <span className="pb-2 pl-1 font-mono text-green">&gt;</span>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={onInput}
-              onKeyDown={onKeyDown}
-              rows={1}
-              placeholder="Ask about this document…"
-              disabled={!!initError}
-              className="max-h-40 flex-1 resize-none bg-transparent py-2 text-[15px] text-ink placeholder:text-faint focus:outline-none disabled:opacity-50"
-            />
-            <button
-              type="button"
-              onClick={() => send(input)}
-              disabled={!input.trim() || sending || !!initError}
-              className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-green text-void transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:bg-line-bright disabled:text-faint"
-              aria-label="Send question"
-            >
-              <ArrowUpIcon size={18} />
-            </button>
-          </div>
-          <p className="mono-label mt-2 px-1 text-center">
-            enter to send · shift + enter for a new line
-          </p>
-        </div>
-      </div>
+      <ChatComposer sending={sending} disabled={!!initError} onSend={send} />
     </div>
   );
 }

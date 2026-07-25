@@ -1,5 +1,7 @@
 import { FileIcon, LayersIcon, PagesIcon } from "@/components/Icons";
 import StatusDot from "@/components/StatusDot";
+import { relativeTime } from "@/lib/format";
+import { chatHref } from "@/lib/routes";
 import type { DocumentRow } from "@/lib/types";
 import Link from "next/link";
 
@@ -8,29 +10,12 @@ interface DocumentCardProps {
   sessionId?: string;
 }
 
-function relativeTime(iso?: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  return `${days}d ago`;
-}
-
 export default function DocumentCard({ doc, sessionId }: DocumentCardProps) {
-  const href = sessionId
-    ? `/chat/${doc.id}?session=${sessionId}`
-    : `/chat/${doc.id}`;
   const time = relativeTime(doc.created_at);
 
   return (
     <Link
-      href={href}
+      href={chatHref(doc.id, sessionId)}
       className="group flex flex-col gap-4 rounded-xl border border-line bg-panel/60 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-green/50 hover:bg-panel-2/70"
     >
       <div className="flex items-center justify-between">

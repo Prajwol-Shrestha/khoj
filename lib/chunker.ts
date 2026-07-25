@@ -1,21 +1,23 @@
+const CHUNK_SIZE = 500;
+const OVERLAP = 50;
+
 export function chunkText(
   text: string,
-  chunkSize = 500,
-  overlap = 50,
+  chunkSize = CHUNK_SIZE,
+  overlap = OVERLAP,
 ): string[] {
-  const chunks: string[] = [];
-  let start = 0;
-
   const cleaned = text
-    .replace(/\u0000/g, "") // remove null bytes — Postgres can't store these
-    .replace(/[\u0001-\u001F\u007F]/g, "") // remove other control characters
+    // collapse first — stripping newlines up front would fuse "end.\nStart" into one word
     .replace(/\s+/g, " ")
+    // Postgres rejects null bytes, and the rest are noise
+    .replace(/[\u0000-\u001F\u007F]/g, "")
     .trim();
 
-  while (start < cleaned.length) {
-    const end = start + chunkSize;
-    chunks.push(cleaned.slice(start, end));
-    start = end - overlap; // overlap so context isn't lost at boundaries
+  const step = Math.max(1, chunkSize - overlap); // a step of 0 would loop forever
+  const chunks: string[] = [];
+
+  for (let start = 0; start < cleaned.length; start += step) {
+    chunks.push(cleaned.slice(start, start + chunkSize));
   }
 
   return chunks.filter((c) => c.trim().length > 20); // drop tiny useless chunks

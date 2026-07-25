@@ -1,180 +1,121 @@
-import { chunkText } from "@/lib/chunker";
+import { getUser, jsonError, serverError } from "@/lib/api";
 import {
-  extractText,
-  isSupportedType,
-  SUPPORTED_EXTENSIONS,
-} from "@/lib/extractor";
-import { embedBatch } from "@/lib/gemini";
+  checkFile,
+  MAX_FILES_PER_UPLOAD,
+  titleFromFileName,
+} from "@/lib/files";
+import {
+  ingestFile,
+  ownerColumns,
+  type IngestedDocument,
+  type Owner,
+} from "@/lib/ingest";
+import { rateLimit } from "@/lib/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import type { UploadResult } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
-const requests = new Map<string, number[]>();
-
-export function rateLimit(
-  req: NextRequest,
-  limit = 5,
-  windowMs = 60_000,
-): boolean {
-  const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-  const now = Date.now();
-
-  // prune stale IPs so this map doesn't grow forever
-  for (const [key, timestamps] of requests) {
-    if (timestamps.every((t) => now - t >= windowMs)) requests.delete(key);
-  }
-
-  const timestamps = (requests.get(ip) ?? []).filter((t) => now - t < windowMs);
-  timestamps.push(now);
-  requests.set(ip, timestamps);
-  return timestamps.length <= limit;
-}
-
 export async function POST(req: NextRequest) {
+  if (!rateLimit(req)) return jsonError("Too many requests", 429);
+
   try {
-    if (!rateLimit(req)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
-
-    const authClient = await createClient(); // get the user
-    const supabase = createAdminClient(); // all DB/storage ops
-
     const formData = await req.formData();
-    const file = formData.get("file") as File;
+    const files = formData.getAll("files") as File[];
     const sessionToken = formData.get("sessionToken") as string | null;
 
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    }
-
-    if (!isSupportedType(file.type)) {
-      return NextResponse.json(
-        {
-          error: `Unsupported file type. Supported formats: ${SUPPORTED_EXTENSIONS.join(", ")}`,
-        },
-        { status: 400 },
+    if (files.length === 0) return jsonError("No files provided", 400);
+    if (files.length > MAX_FILES_PER_UPLOAD) {
+      return jsonError(
+        `Maximum ${MAX_FILES_PER_UPLOAD} files allowed per upload.`,
+        400,
       );
     }
 
-    if (file.size > 20 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: "File too large. Max 20MB." },
-        { status: 413 },
-      );
+    // check every file up front so a bad third one can't half-upload a batch
+    for (const file of files) {
+      const problem = checkFile(file);
+      if (problem) return jsonError(problem, 400);
     }
 
-    // get current user (null if guest)
-    const {
-      data: { user },
-    } = await authClient.auth.getUser();
+    const user = await getUser();
+    const owner: Owner = { userId: user?.id ?? null, sessionToken };
 
-    // 1. upload PDF to Supabase Storage
-    const fileBuffer = await file.arrayBuffer();
-    const fileName = `${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
-    const storagePath = user
-      ? `${user.id}/${fileName}`
-      : `guest/${sessionToken}/${fileName}`;
-
-    const { error: storageError } = await supabase.storage
-      .from("documents")
-      .upload(storagePath, fileBuffer, { contentType: file.type });
-
-    if (storageError) throw new Error(`Storage error: ${storageError.message}`);
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("documents").getPublicUrl(storagePath);
-
-    // 2. create document row (status: processing)
-    const { data: document, error: docError } = await supabase
-      .from("documents")
-      .insert({
-        user_id: user?.id ?? null,
-        session_token: user ? null : sessionToken,
-        title: file.name.replace(/\.(pdf|txt|md|docx)$/i, ""),
-        file_name: file.name,
-        file_url: publicUrl,
-        status: "processing",
-      })
-      .select()
-      .single();
-
-    if (docError) throw new Error(`Document insert error: ${docError.message}`);
-
-    // 3. extract text from file
-    const { text: rawText, pageCount = 1 } = await extractText(
-      Buffer.from(fileBuffer),
-      file.type as any,
-    );
-
-    if (!rawText || rawText.trim().length === 0) {
-      await supabase
-        .from("documents")
-        .update({ status: "error" })
-        .eq("id", document.id);
-      return NextResponse.json(
-        { error: "Could not extract text from PDF" },
-        { status: 422 },
-      );
-    }
-
-    // 4. chunk the text
-    const chunks = chunkText(rawText);
-
-    // 5. embed all chunks
-    const embeddings = await embedBatch(chunks);
-
-    // 6. store chunks + embeddings in DB
-    const chunkRows = chunks.map((content, index) => ({
-      document_id: document.id,
-      content,
-      chunk_index: index,
-      embedding: JSON.stringify(embeddings[index]),
-    }));
-
-    const { error: chunkError } = await supabase
-      .from("chunks")
-      .insert(chunkRows);
-
-    if (chunkError)
-      throw new Error(`Chunk insert error: ${chunkError.message}`);
-
-    // 7. update document status to ready
-    await supabase
-      .from("documents")
-      .update({
-        status: "ready",
-        page_count: pageCount,
-        chunk_count: chunks.length,
-      })
-      .eq("id", document.id);
-
-    // 8. create a chat session
-    const { data: session, error: sessionError } = await supabase
-      .from("chat_sessions")
-      .insert({
-        document_id: document.id,
-        user_id: user?.id ?? null,
-        session_token: user ? null : sessionToken,
+    if (files.length === 1) {
+      const document = await ingestFile(files[0], owner);
+      const sessionId = await insertSession(owner, {
         title: document.title,
-      })
-      .select()
+        document_id: document.id,
+        collection_id: null,
+      });
+
+      const result: UploadResult = {
+        id: document.id,
+        sessionId,
+        kind: "document",
+        documentCount: 1,
+      };
+      return NextResponse.json(result);
+    }
+
+    const supabase = createAdminClient();
+    const title = `${titleFromFileName(files[0].name)} + ${files.length - 1} more`;
+
+    const { data: collection, error: collectionError } = await supabase
+      .from("collections")
+      .insert({ ...ownerColumns(owner), title })
+      .select("id")
       .single();
+    if (collectionError) {
+      throw new Error(`Collection error: ${collectionError.message}`);
+    }
 
-    if (sessionError) throw new Error(`Session error: ${sessionError.message}`);
+    const documents: IngestedDocument[] = [];
+    for (const file of files) {
+      const document = await ingestFile(file, owner);
+      documents.push(document);
 
-    return NextResponse.json({
-      success: true,
-      documentId: document.id,
-      sessionId: session.id,
-      chunkCount: chunks.length,
-      pageCount,
+      // link as we go, so a later failure still leaves the finished files
+      // in the collection rather than loose on the dashboard
+      const { error: linkError } = await supabase
+        .from("collection_documents")
+        .insert({ collection_id: collection.id, document_id: document.id });
+      if (linkError) {
+        throw new Error(`Collection link error: ${linkError.message}`);
+      }
+    }
+
+    const sessionId = await insertSession(owner, {
+      title,
+      document_id: null,
+      collection_id: collection.id,
     });
+
+    const result: UploadResult = {
+      id: collection.id,
+      sessionId,
+      kind: "collection",
+      documentCount: documents.length,
+    };
+    return NextResponse.json(result);
   } catch (error) {
-    console.error("Upload error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Upload failed" },
-      { status: 500 },
-    );
+    return serverError("Upload", error);
   }
+}
+
+async function insertSession(
+  owner: Owner,
+  session: {
+    title: string;
+    document_id: string | null;
+    collection_id: string | null;
+  },
+): Promise<string> {
+  const { data, error } = await createAdminClient()
+    .from("chat_sessions")
+    .insert({ ...ownerColumns(owner), ...session })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(`Session error: ${error.message}`);
+  return data.id;
 }

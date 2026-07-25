@@ -1,5 +1,5 @@
+import { getUser, jsonError, updateOwnedRow } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function DELETE(
@@ -7,55 +7,38 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const authClient = await createClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const user = await getUser();
+  if (!user) return jsonError("Unauthorized", 401);
 
   const admin = createAdminClient();
 
-  // verify ownership
-  const { data: col } = await admin
+  const { data: collection } = await admin
     .from("collections")
-    .select("id, user_id")
+    .select("id")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
 
-  if (!col) {
-    return NextResponse.json(
-      { error: "Collection not found" },
-      { status: 404 },
-    );
-  }
+  if (!collection) return jsonError("Collection not found", 404);
 
-  // get all document ids in this collection
-  const { data: colDocs } = await admin
+  const { data: links } = await admin
     .from("collection_documents")
     .select("document_id")
     .eq("collection_id", id);
 
-  // delete each document (cascades chunks)
-  if (colDocs && colDocs.length > 0) {
+  if (links && links.length > 0) {
     await admin
       .from("documents")
       .delete()
       .in(
         "id",
-        colDocs.map((d) => d.document_id),
+        links.map((link) => link.document_id),
       );
   }
 
-  // delete collection (cascades collection_documents + chat_sessions)
+  // collection_documents and chat_sessions cascade off the collection row
   const { error } = await admin.from("collections").delete().eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return jsonError(error.message, 500);
 
   return NextResponse.json({ success: true });
 }
@@ -65,41 +48,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const authClient = await createClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
+  const user = await getUser();
+  if (!user) return jsonError("Unauthorized", 401);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await req.json();
-  const allowed = ["title", "pinned"];
-  const updates = Object.fromEntries(
-    Object.entries(body).filter(([key]) => allowed.includes(key)),
-  );
-
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json(
-      { error: "No valid fields to update" },
-      { status: 400 },
-    );
-  }
-
-  const admin = createAdminClient();
-
-  const { data, error } = await admin
-    .from("collections")
-    .update(updates)
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ data });
+  return updateOwnedRow("collections", id, user.id, await req.json());
 }

@@ -1,12 +1,14 @@
 "use client";
 
 import { FileIcon, LayersIcon, PagesIcon, ScanIcon } from "@/components/Icons";
-import { SignOutButton } from "@/components/SignOutButton";
-import StatusDot from "@/components/StatusDot";
-import UserAvatar from "@/components/UserAvatar";
+import LibraryCard from "@/components/LibraryCard";
+import SectionHeader from "@/components/SectionHeader";
+import SiteHeader from "@/components/SiteHeader";
+import { useLibrary } from "@/hooks/useLibrary";
+import { pluralize } from "@/lib/format";
+import { chatHref } from "@/lib/routes";
 import type { CollectionRow, DocumentRow } from "@/lib/types";
 import Link from "next/link";
-import { useState } from "react";
 
 interface Props {
   user: { email: string; name: string; avatarUrl?: string };
@@ -16,15 +18,6 @@ interface Props {
   sessionMap: Record<string, string>;
 }
 
-function formatDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 export default function DashboardClient({
   user,
   documents,
@@ -32,128 +25,16 @@ export default function DashboardClient({
   collectionDocCounts,
   sessionMap,
 }: Props) {
-  const [docs, setDocs] = useState<DocumentRow[]>(documents);
-  const [cols, setCols] = useState<CollectionRow[]>(collections);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
+  const docs = useLibrary("documents", documents);
+  const cols = useLibrary("collections", collections);
 
-  const isEmpty = docs.length === 0 && cols.length === 0;
-
-  const sortedDocs = [...docs].sort((a, b) => {
-    if (a.pinned === b.pinned) return 0;
-    return a.pinned ? -1 : 1;
-  });
-
-  const sortedCols = [...cols].sort((a, b) => {
-    if (a.pinned === b.pinned) return 0;
-    return a.pinned ? -1 : 1;
-  });
-
-  async function deleteDocument(id: string) {
-    if (!confirm("Delete this document and its chat history?")) return;
-    setDeleting(id);
-    const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
-    if (res.ok) setDocs((d) => d.filter((doc) => doc.id !== id));
-    else alert("Failed to delete document. Please try again.");
-    setDeleting(null);
-  }
-
-  async function deleteCollection(id: string) {
-    if (!confirm("Delete this collection and its chat history?")) return;
-    setDeleting(id);
-    const res = await fetch(`/api/collections/${id}`, { method: "DELETE" });
-    if (res.ok) setCols((c) => c.filter((col) => col.id !== id));
-    else alert("Failed to delete collection. Please try again.");
-    setDeleting(null);
-  }
-
-  async function renameDocument(id: string, title: string) {
-    const res = await fetch(`/api/documents/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
-    if (res.ok) {
-      setDocs((d) => d.map((doc) => (doc.id === id ? { ...doc, title } : doc)));
-    }
-  }
-
-  async function renameCollection(id: string, title: string) {
-    const res = await fetch(`/api/collections/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
-    if (res.ok) {
-      setCols((c) => c.map((col) => (col.id === id ? { ...col, title } : col)));
-    }
-  }
-
-  async function togglePinDocument(id: string, pinned: boolean) {
-    const res = await fetch(`/api/documents/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pinned: !pinned }),
-    });
-    if (res.ok) {
-      setDocs((d) =>
-        d.map((doc) => (doc.id === id ? { ...doc, pinned: !pinned } : doc)),
-      );
-    }
-  }
-
-  async function togglePinCollection(id: string, pinned: boolean) {
-    const res = await fetch(`/api/collections/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pinned: !pinned }),
-    });
-    if (res.ok) {
-      setCols((c) =>
-        c.map((col) => (col.id === id ? { ...col, pinned: !pinned } : col)),
-      );
-    }
-  }
+  const isEmpty = docs.items.length === 0 && cols.items.length === 0;
 
   return (
     <>
-      <header className="sticky top-0 z-20 border-b border-line bg-void/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-5">
-          <Link
-            href="/"
-            className="flex items-center gap-2 font-mono text-sm font-semibold tracking-tight text-ink"
-          >
-            <ScanIcon size={16} className="text-green" />
-            khoj<span className="caret">_</span>
-          </Link>
-
-          <div className="flex items-center gap-4">
-            <span className="mono-label hidden items-center gap-2 sm:flex">
-              <span
-                className="inline-block h-1.5 w-1.5 rounded-full bg-green"
-                style={{ boxShadow: "0 0 8px var(--green)" }}
-              />
-              online · llama-3.1 · gemini-embed
-            </span>
-
-            <div className="flex items-center gap-3">
-              <UserAvatar
-                name={user.name}
-                email={user.email}
-                avatarUrl={user.avatarUrl}
-              />
-              <span className="hidden text-sm text-muted sm:block">
-                {user.name || user.email}
-              </span>
-              <SignOutButton />
-            </div>
-          </div>
-        </div>
-      </header>
+      <SiteHeader user={user} />
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-12">
-        {/* page title */}
         <div className="flex animate-fade-up items-center justify-between">
           <div>
             <p className="mono-label flex items-center gap-2">
@@ -167,10 +48,10 @@ export default function DashboardClient({
               {isEmpty
                 ? "No documents yet"
                 : [
-                    docs.length > 0 &&
-                      `${docs.length} document${docs.length === 1 ? "" : "s"}`,
-                    cols.length > 0 &&
-                      `${cols.length} collection${cols.length === 1 ? "" : "s"}`,
+                    docs.items.length > 0 &&
+                      pluralize(docs.items.length, "document"),
+                    cols.items.length > 0 &&
+                      pluralize(cols.items.length, "collection"),
                   ]
                     .filter(Boolean)
                     .join(" · ")}
@@ -184,7 +65,6 @@ export default function DashboardClient({
           </Link>
         </div>
 
-        {/* empty state */}
         {isEmpty && (
           <div
             className="mt-16 flex animate-fade-up flex-col items-center justify-center text-center"
@@ -208,227 +88,84 @@ export default function DashboardClient({
           </div>
         )}
 
-        {/* document grid */}
-        {sortedDocs.length > 0 && (
+        {docs.items.length > 0 && (
           <div
             className="mt-8 animate-fade-up"
             style={{ animationDelay: "80ms" }}
           >
-            <div className="flex items-center gap-3">
-              <span className="mono-label">documents</span>
-              <span className="h-px flex-1 bg-line" />
-              <span className="font-mono text-xs tabular-nums text-faint">
-                {String(docs.length).padStart(2, "0")}
-              </span>
-            </div>
+            <SectionHeader label="documents" count={docs.items.length} />
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {sortedDocs.map((doc) => {
+              {docs.items.map((doc) => {
                 const sessionId = sessionMap[doc.id];
-                const href = sessionId
-                  ? `/chat/${doc.id}?session=${sessionId}`
-                  : `/chat/${doc.id}`;
+                const openable = Boolean(sessionId) && doc.status === "ready";
 
                 return (
-                  <div
+                  <LibraryCard
                     key={doc.id}
-                    className="group relative flex flex-col gap-4 rounded-xl border border-line bg-panel/60 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-green/50 hover:bg-panel-2/70"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-line-bright bg-panel-2 text-muted transition-colors group-hover:text-green">
-                        <FileIcon size={16} />
-                      </span>
-                      <div className="flex items-center gap-3">
-                        <StatusDot status={doc.status} />
-                        <button
-                          onClick={() => togglePinDocument(doc.id, doc.pinned)}
-                          className={`text-faint opacity-0 transition-all hover:text-green group-hover:opacity-100 ${doc.pinned ? "opacity-100 text-green" : ""}`}
-                          aria-label={doc.pinned ? "Unpin" : "Pin"}
-                          title={doc.pinned ? "Unpin" : "Pin to top"}
-                        >
-                          {doc.pinned ? "★" : "☆"}
-                        </button>
-                        <button
-                          onClick={() => deleteDocument(doc.id)}
-                          disabled={deleting === doc.id}
-                          className="cursor-pointer text-faint opacity-0 transition-opacity hover:text-red disabled:opacity-50 group-hover:opacity-100"
-                          aria-label="Delete document"
-                        >
-                          {deleting === doc.id ? "..." : "✕"}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="min-w-0">
-                      {editingId === doc.id ? (
-                        <input
-                          autoFocus
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onBlur={async () => {
-                            if (
-                              editingTitle.trim() &&
-                              editingTitle !== doc.title
-                            ) {
-                              await renameDocument(doc.id, editingTitle.trim());
-                            }
-                            setEditingId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                            if (e.key === "Escape") setEditingId(null);
-                          }}
-                          className="w-full bg-transparent text-sm font-medium text-ink outline-none border-b border-green pb-0.5"
-                        />
-                      ) : (
-                        <h3
-                          className="truncate text-sm font-medium text-ink group-hover:text-green cursor-text"
-                          onDoubleClick={() => {
-                            setEditingId(doc.id);
-                            setEditingTitle(doc.title || doc.file_name);
-                          }}
-                          title="Double-click to rename"
-                        >
-                          {doc.title || doc.file_name}
-                        </h3>
-                      )}
-                      <p className="mono-label mt-1 truncate">
-                        {doc.file_name}
-                      </p>
-                    </div>
-
-                    <div className="mt-auto flex items-center gap-4 border-t border-line pt-3">
-                      <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
-                        <PagesIcon size={13} />
-                        {doc.page_count ?? "—"}p
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
-                        <LayersIcon size={13} />
-                        {doc.chunk_count ?? "—"}c
-                      </span>
-                      <span className="ml-auto font-mono text-xs text-faint">
-                        {formatDate(doc.created_at)}
-                      </span>
-                    </div>
-
-                    {sessionId && doc.status === "ready" && (
-                      <Link
-                        href={href}
-                        className="flex items-center justify-center rounded-lg border border-line-bright bg-panel-2 py-2 text-sm text-muted transition-colors hover:border-green/50 hover:text-green"
-                      >
-                        Open chat →
-                      </Link>
-                    )}
-                  </div>
+                    icon={<FileIcon size={16} />}
+                    title={doc.title || doc.file_name}
+                    subtitle={doc.file_name}
+                    status={doc.status}
+                    stats={
+                      <>
+                        <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
+                          <PagesIcon size={13} />
+                          {doc.page_count ?? "—"}p
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-muted">
+                          <LayersIcon size={13} />
+                          {doc.chunk_count ?? "—"}c
+                        </span>
+                      </>
+                    }
+                    createdAt={doc.created_at}
+                    href={openable ? chatHref(doc.id, sessionId) : undefined}
+                    pinned={doc.pinned}
+                    busy={docs.busyId === doc.id}
+                    deleteLabel="Delete document"
+                    onRename={(title) => docs.rename(doc.id, title)}
+                    onTogglePin={() => docs.togglePin(doc.id, doc.pinned)}
+                    onDelete={() => docs.remove(doc.id)}
+                  />
                 );
               })}
             </div>
           </div>
         )}
 
-        {/* collections section */}
-        {cols.length > 0 && (
+        {cols.items.length > 0 && (
           <div
             className="mt-12 animate-fade-up"
             style={{ animationDelay: "120ms" }}
           >
-            <div className="flex items-center gap-3">
-              <span className="mono-label">collections</span>
-              <span className="h-px flex-1 bg-line" />
-              <span className="font-mono text-xs tabular-nums text-faint">
-                {String(cols.length).padStart(2, "0")}
-              </span>
-            </div>
+            <SectionHeader label="collections" count={cols.items.length} />
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {sortedCols.map((col) => {
+              {cols.items.map((col) => {
                 const sessionId = sessionMap[col.id];
                 const docCount = collectionDocCounts[col.id] ?? 0;
-                const href = sessionId
-                  ? `/chat/${col.id}?session=${sessionId}`
-                  : `/chat/${col.id}`;
 
                 return (
-                  <div
+                  <LibraryCard
                     key={col.id}
-                    className="group relative flex flex-col gap-4 rounded-xl border border-line bg-panel/60 p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-green/50 hover:bg-panel-2/70"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-line-bright bg-panel-2 text-muted transition-colors group-hover:text-green">
-                        <LayersIcon size={16} />
+                    icon={<LayersIcon size={16} />}
+                    title={col.title}
+                    label="collection"
+                    stats={
+                      <span className="font-mono text-xs tabular-nums text-muted">
+                        {pluralize(docCount, "document")}
                       </span>
-                      <button
-                        onClick={() => togglePinCollection(col.id, col.pinned)}
-                        className={`text-faint opacity-0 transition-all hover:text-green group-hover:opacity-100 ${col.pinned ? "opacity-100 text-green" : ""}`}
-                        aria-label={col.pinned ? "Unpin" : "Pin"}
-                        title={col.pinned ? "Unpin" : "Pin to top"}
-                      >
-                        {col.pinned ? "★" : "☆"}
-                      </button>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-xs text-green">
-                          collection
-                        </span>
-                        <button
-                          onClick={() => deleteCollection(col.id)}
-                          disabled={deleting === col.id}
-                          className="cursor-pointer text-faint opacity-0 transition-opacity hover:text-red disabled:opacity-50 group-hover:opacity-100"
-                          aria-label="Delete collection"
-                        >
-                          {deleting === col.id ? "..." : "✕"}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0">
-                      {editingId === col.id ? (
-                        <input
-                          autoFocus
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onBlur={async () => {
-                            if (
-                              editingTitle.trim() &&
-                              editingTitle !== col.title
-                            ) {
-                              await renameCollection(col.id, editingTitle.trim());
-                            }
-                            setEditingId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                            if (e.key === "Escape") setEditingId(null);
-                          }}
-                          className="w-full bg-transparent text-sm font-medium text-ink outline-none border-b border-green pb-0.5"
-                        />
-                      ) : (
-                        <h3
-                          className="truncate text-sm font-medium text-ink group-hover:text-green cursor-text"
-                          onDoubleClick={() => {
-                            setEditingId(col.id);
-                            setEditingTitle(col.title);
-                          }}
-                          title="Double-click to rename"
-                        >
-                          {col.title}
-                        </h3>
-                      )}
-                    </div>
-
-                    <div className="mt-auto flex items-center border-t border-line pt-3">
-                      <span className="ml-auto font-mono text-xs text-faint">
-                        {formatDate(col.created_at)}
-                      </span>
-                    </div>
-
-                    {sessionId && (
-                      <Link
-                        href={href}
-                        className="flex items-center justify-center rounded-lg border border-line-bright bg-panel-2 py-2 text-sm text-muted transition-colors hover:border-green/50 hover:text-green"
-                      >
-                        Open chat →
-                      </Link>
-                    )}
-                  </div>
+                    }
+                    createdAt={col.created_at}
+                    href={sessionId ? chatHref(col.id, sessionId) : undefined}
+                    pinned={col.pinned}
+                    busy={cols.busyId === col.id}
+                    deleteLabel="Delete collection"
+                    onRename={(title) => cols.rename(col.id, title)}
+                    onTogglePin={() => cols.togglePin(col.id, col.pinned)}
+                    onDelete={() => cols.remove(col.id)}
+                  />
                 );
               })}
             </div>

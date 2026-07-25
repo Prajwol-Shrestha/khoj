@@ -24,10 +24,12 @@ export interface CollectionRow {
   created_at: string | null;
   pinned: boolean;
 }
+
+// A session points at exactly one of the two: a single document, or a collection.
 export interface ChatSessionRow {
   id: string;
-  document_id: string;
-  title: string | null;
+  document_id: string | null;
+  collection_id: string | null;
 }
 
 export interface SourceChunkData {
@@ -57,18 +59,13 @@ export interface ChatMessage {
   error?: boolean;
 }
 
-export interface UploadResponse {
-  success: boolean;
-  documentId: string;
+// One file uploads as a document; several upload as a collection of them.
+// Either way `id` is what /chat/[id] takes.
+export interface UploadResult {
+  id: string;
   sessionId: string;
-  chunkCount: number;
-  pageCount: number;
-}
-
-export interface ChatApiResponse {
-  answer: string;
-  sources: SourceChunkData[];
-  tokensUsed: number;
+  kind: "document" | "collection";
+  documentCount: number;
 }
 
 export interface ApiError {
