@@ -15,6 +15,13 @@ export interface DocumentRow {
   user_id?: string | null;
 }
 
+export interface CollectionRow {
+  id: string;
+  user_id: string | null;
+  session_token: string | null;
+  title: string;
+  created_at: string | null;
+}
 export interface ChatSessionRow {
   id: string;
   document_id: string;

@@ -12,22 +12,49 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   const admin = createAdminClient();
+  const [
+    { data: allDocuments },
+    { data: collectionDocs },
+    { data: collections },
+    { data: sessions },
+  ] = await Promise.all([
+    admin
+      .from("documents")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    admin.from("collection_documents").select("document_id, collection_id"),
+    admin
+      .from("collections")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    admin
+      .from("chat_sessions")
+      .select("id, document_id, collection_id")
+      .eq("user_id", user.id),
+  ]);
 
-  const { data: documents } = await admin
-    .from("documents")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  // filter standalone documents (not part of any collection)
+  const collectionDocIdSet = new Set(
+    (collectionDocs ?? []).map((cd) => cd.document_id),
+  );
+  const documents = (allDocuments ?? []).filter(
+    (doc) => !collectionDocIdSet.has(doc.id),
+  );
 
-  const { data: sessions } = await admin
-    .from("chat_sessions")
-    .select("id, document_id")
-    .eq("user_id", user.id);
+  // count documents per collection
+  const collectionDocCounts: Record<string, number> = {};
+  (collectionDocs ?? []).forEach((cd) => {
+    collectionDocCounts[cd.collection_id] =
+      (collectionDocCounts[cd.collection_id] ?? 0) + 1;
+  });
 
-  // build a map of document_id -> session_id
+  // build session map (document_id or collection_id → session_id)
   const sessionMap: Record<string, string> = {};
   (sessions ?? []).forEach((s) => {
     if (s.document_id) sessionMap[s.document_id] = s.id;
+    if (s.collection_id) sessionMap[s.collection_id] = s.id;
   });
 
   return (
@@ -39,6 +66,8 @@ export default async function DashboardPage() {
           user.user_metadata?.avatar_url ?? user.user_metadata?.picture ?? "",
       }}
       documents={documents ?? []}
+      collections={collections ?? []}
+      collectionDocCounts={collectionDocCounts}
       sessionMap={sessionMap}
     />
   );
