@@ -25,6 +25,7 @@ export interface SourceChunkData {
   id?: string;
   content: string;
   similarity: number;
+  document_id: string | null;
 }
 
 export interface MessageRow {

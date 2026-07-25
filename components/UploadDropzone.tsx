@@ -8,7 +8,6 @@ import {
   UploadIcon,
 } from "@/components/Icons";
 import { getGuestToken } from "@/lib/guest";
-import type { ApiError, UploadResponse } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 
@@ -34,22 +33,28 @@ export default function UploadDropzone() {
   const [dragging, setDragging] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
-  const [activeFile, setActiveFile] = useState<File | null>(null);
+  const [activeFiles, setActiveFiles] = useState<File[]>([]);
   const [error, setError] = useState<string>("");
 
   const upload = useCallback(
-    (file: File) => {
-      setActiveFile(file);
+    (files: File[]) => {
+      setActiveFiles(files);
       setError("");
       setProgress(0);
       setPhase("sending");
 
       const form = new FormData();
-      form.append("file", file);
+      const isCollection = files.length > 1;
+
+      if (isCollection) {
+        files.forEach((f) => form.append("files", f));
+      } else {
+        form.append("file", files[0]);
+      }
       form.append("sessionToken", getGuestToken());
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/upload");
+      xhr.open("POST", isCollection ? "/api/upload-collection" : "/api/upload");
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -65,21 +70,28 @@ export default function UploadDropzone() {
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
-            const data = JSON.parse(xhr.responseText) as UploadResponse;
-            router.push(`/chat/${data.documentId}?session=${data.sessionId}`);
+            const data = JSON.parse(xhr.responseText);
+            console.log(
+              "redirect url:",
+              `/chat/${isCollection ? data.collectionId : data.documentId}?session=${data.sessionId}`,
+            );
+            console.log("full response:", data);
+            router.push(
+              `/chat/${isCollection ? data.collectionId : data.documentId}?session=${data.sessionId}`,
+            );
             return;
           } catch {
-            setError("Upload finished but the response could not be read.");
+            setError("Upload finished but response could not be read.");
             setPhase("error");
             return;
           }
         }
         let message = "Upload failed. Please try again.";
         try {
-          const data = JSON.parse(xhr.responseText) as ApiError;
+          const data = JSON.parse(xhr.responseText);
           if (data.error) message = data.error;
         } catch {
-          /* keep default message */
+          /* keep default */
         }
         setError(message);
         setPhase("error");
@@ -94,27 +106,35 @@ export default function UploadDropzone() {
     },
     [router],
   );
-
   const handleFiles = useCallback(
     (files: FileList | null) => {
-      const file = files?.[0];
-      if (!file) return;
+      if (!files || files.length === 0) return;
 
-      if (!SUPPORTED_TYPES.includes(file.type)) {
-        setActiveFile(file);
-        setError("Supported formats: PDF, TXT, MD, DOCX");
+      if (files.length > 3) {
+        setError("Maximum 3 files allowed per chat session.");
         setPhase("error");
         return;
       }
 
-      upload(file);
+      // validate all files
+      const fileArray = Array.from(files);
+      for (const file of fileArray) {
+        if (!SUPPORTED_TYPES.includes(file.type)) {
+          setActiveFiles([file]);
+          setError(`${file.name}: Supported formats are PDF, TXT, MD, DOCX`);
+          setPhase("error");
+          return;
+        }
+      }
+
+      upload(fileArray);
     },
     [upload],
   );
 
   const reset = useCallback(() => {
     setPhase("idle");
-    setActiveFile(null);
+    setActiveFiles([]);
     setError("");
     setProgress(0);
     if (inputRef.current) inputRef.current.value = "";
@@ -128,6 +148,7 @@ export default function UploadDropzone() {
         ref={inputRef}
         type="file"
         accept=".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        multiple
         className="sr-only"
         onChange={(e) => handleFiles(e.target.files)}
       />
@@ -163,37 +184,33 @@ export default function UploadDropzone() {
           </span>
           <span className="space-y-1.5">
             <span className="block text-base font-medium text-ink">
-              {dragging ? "Release to ingest" : `Drop a PDF, TXT, MD, or DOCX to begin`}
+              {dragging ? "Release to ingest" : "Drop files to begin"}
             </span>
             <span className="block text-sm text-muted">
               or{" "}
               <span className="text-green underline underline-offset-4">
                 browse files
               </span>{" "}
-              from your device
+              — up to 3 files
             </span>
           </span>
           <span className="mono-label">pdf · txt · md · docx</span>{" "}
         </button>
       )}
 
-      {busy && activeFile && (
+      {busy && activeFiles && (
         <div className="rounded-2xl border border-line-bright bg-panel/70 px-6 py-6">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-line-bright bg-panel-2 text-green">
-              <FileIcon size={18} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">
-                {activeFile.name}
-              </p>
-              <p className="mono-label mt-1">{formatBytes(activeFile.size)}</p>
-            </div>
-            <span className="font-mono text-xs tabular-nums text-muted">
-              {phase === "sending" ? `${progress}%` : "—"}
-            </span>
+          <div className="space-y-2">
+            {activeFiles.map((f, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <FileIcon size={14} className="text-green shrink-0" />
+                <p className="truncate text-sm text-ink">{f.name}</p>
+                <span className="ml-auto font-mono text-xs text-faint">
+                  {formatBytes(f.size)}
+                </span>
+              </div>
+            ))}
           </div>
-
           <div className="mt-5 h-1 w-full overflow-hidden rounded-full bg-line">
             <div
               className="h-full rounded-full bg-green transition-all duration-300"
@@ -238,8 +255,10 @@ export default function UploadDropzone() {
                 Couldn&apos;t process that file
               </p>
               <p className="mt-1 text-sm text-muted">{error}</p>
-              {activeFile && (
-                <p className="mono-label mt-2 truncate">{activeFile.name}</p>
+              {activeFiles && (
+                <p className="mono-label mt-2 truncate">
+                  {activeFiles.map((f) => f.name).join(", ")}
+                </p>
               )}
             </div>
             <button

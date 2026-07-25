@@ -21,7 +21,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ChatWindowProps {
-  docId: string;
+  id: string;
   initialSessionId?: string;
 }
 
@@ -56,10 +56,7 @@ function rowToMessage(row: MessageRow): ChatMessageType {
   };
 }
 
-export default function ChatWindow({
-  docId,
-  initialSessionId,
-}: ChatWindowProps) {
+export default function ChatWindow({ id, initialSessionId }: ChatWindowProps) {
   const [sessionId, setSessionId] = useState<string | undefined>(
     initialSessionId,
   );
@@ -80,44 +77,68 @@ export default function ChatWindow({
       try {
         const supabase = createClient();
 
-        // fetch document metadata
-        const docRes = await supabase
-          .from("documents")
-          .select("title, file_name, status, page_count, chunk_count")
-          .eq("id", docId)
-          .maybeSingle();
-
-        if (docRes.error) {
-          if (!cancelled) {
-            setInitError(
-              "Failed to load document. You may not have access to this document.",
-            );
-          }
-          return;
-        }
-
-        if (!cancelled && docRes.data) setDoc(docRes.data as DocMeta);
-
         // resolve session id
         let sid = initialSessionId;
         if (!sid) {
-          const sRes = await supabase
+          const byDoc = await supabase
             .from("chat_sessions")
-            .select("id")
-            .eq("document_id", docId)
+            .select("id, document_id, collection_id")
+            .eq("document_id", id)
             .limit(1);
 
-          if (sRes.error) {
-            if (!cancelled) setInitError("Failed to load chat session.");
-            return;
+          if (byDoc.data?.[0]) {
+            sid = byDoc.data[0].id;
+          } else {
+            const byCol = await supabase
+              .from("chat_sessions")
+              .select("id, document_id, collection_id")
+              .eq("collection_id", id)
+              .limit(1);
+            sid = byCol.data?.[0]?.id;
           }
-
-          sid = (sRes.data as { id: string }[] | null)?.[0]?.id;
         }
 
         if (!cancelled) setSessionId(sid);
 
-        // fetch message history — non-fatal if this fails
+        // fetch document or collection metadata
+        const docRes = await supabase
+          .from("documents")
+          .select("title, file_name, status, page_count, chunk_count")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (docRes.error) {
+          if (!cancelled) setInitError("Failed to load document.");
+          return;
+        }
+
+        if (docRes.data) {
+          if (!cancelled) setDoc(docRes.data as DocMeta);
+        } else {
+          // it's a collection
+          const colRes = await supabase
+            .from("collections")
+            .select("title")
+            .eq("id", id)
+            .maybeSingle();
+
+          if (colRes.error) {
+            if (!cancelled) setInitError("Failed to load collection.");
+            return;
+          }
+
+          if (colRes.data && !cancelled) {
+            setDoc({
+              title: colRes.data.title,
+              file_name: "",
+              status: "ready",
+              page_count: null,
+              chunk_count: null,
+            });
+          }
+        }
+
+        // fetch message history
         if (sid) {
           const mRes = await supabase
             .from("messages")
@@ -126,19 +147,15 @@ export default function ChatWindow({
             .order("created_at", { ascending: true });
 
           if (mRes.error) {
-            // don't block the whole page for history failures
-            // user can still chat, they just won't see past messages
             console.error("Failed to load message history:", mRes.error);
           } else if (!cancelled && mRes.data) {
             setMessages((mRes.data as MessageRow[]).map(rowToMessage));
           }
         }
       } catch {
-        if (!cancelled) {
-          setInitError("Something went wrong loading this document.");
-        }
+        if (!cancelled) setInitError("Something went wrong loading this page.");
       } finally {
-        if (!cancelled) setReady(true);
+        if (!cancelled) setReady(true); // ← this is what shows the empty state
       }
     }
 
@@ -146,7 +163,7 @@ export default function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [docId, initialSessionId]);
+  }, [id, initialSessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -282,7 +299,12 @@ export default function ChatWindow({
         setMessages((m) =>
           m.map((msg) =>
             msg.id === pendingId
-              ? { id: pendingId, role: "assistant", content: message, error: true }
+              ? {
+                  id: pendingId,
+                  role: "assistant",
+                  content: message,
+                  error: true,
+                }
               : msg,
           ),
         );

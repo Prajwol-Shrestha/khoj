@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     // 1. get the session + document
     const { data: session, error: sessionError } = await supabase
       .from("chat_sessions")
-      .select("id, document_id")
+      .select("id, document_id, collection_id")
       .eq("id", sessionId)
       .single();
 
@@ -50,21 +50,21 @@ export async function POST(req: NextRequest) {
     // 3. embed the question
     const questionEmbedding = await embedQuery(question);
 
-    // 4. vector search — find top 3 relevant chunks
+    // 4. vector search — find top 3 or 5 relevant chunks
     const { data: chunks, error: searchError } = await supabase.rpc(
       "match_chunks",
       {
         query_embedding: questionEmbedding,
-        match_document_id: session.document_id,
-        match_count: 3,
+        match_document_id: session.document_id ?? null,
+        match_collection_id: session.collection_id ?? null,
+        match_count: session.collection_id ? 5 : 3, 
       },
     );
-
     if (searchError) throw new Error(`Search error: ${searchError.message}`);
 
     // filter out chunks that aren't actually relevant
     const SIMILARITY_THRESHOLD = 0.5;
-    const relevantChunks = (chunks as MatchedChunk[] ?? []).filter(
+    const relevantChunks = ((chunks as MatchedChunk[]) ?? []).filter(
       (c) => c.similarity >= SIMILARITY_THRESHOLD,
     );
 
@@ -112,6 +112,7 @@ ${context}`,
     const sources: SourceChunkData[] = relevantChunks.map((c) => ({
       content: c.content,
       similarity: Math.round(c.similarity * 100) / 100,
+      document_id: c.document_id,
     }));
 
     let fullAnswer = "";
@@ -176,7 +177,7 @@ ${context}`,
         });
 
         // signal the end
-        controller.enqueue(
+      controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`),
         );
         controller.close();
