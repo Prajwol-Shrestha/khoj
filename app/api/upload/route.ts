@@ -1,9 +1,13 @@
 import { chunkText } from "@/lib/chunker";
+import {
+  extractText,
+  isSupportedType,
+  SUPPORTED_EXTENSIONS,
+} from "@/lib/extractor";
 import { embedBatch } from "@/lib/gemini";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import pdfParse from "pdf-parse";
 
 const requests = new Map<string, number[]>();
 
@@ -43,9 +47,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    if (file.type !== "application/pdf") {
+    if (!isSupportedType(file.type)) {
       return NextResponse.json(
-        { error: "Only PDFs are supported" },
+        {
+          error: `Unsupported file type. Supported formats: ${SUPPORTED_EXTENSIONS.join(", ")}`,
+        },
         { status: 400 },
       );
     }
@@ -85,7 +91,7 @@ export async function POST(req: NextRequest) {
       .insert({
         user_id: user?.id ?? null,
         session_token: user ? null : sessionToken,
-        title: file.name.replace(".pdf", ""),
+        title: file.name.replace(/\.(pdf|txt|md|docx)$/i, ""),
         file_name: file.name,
         file_url: publicUrl,
         status: "processing",
@@ -95,10 +101,11 @@ export async function POST(req: NextRequest) {
 
     if (docError) throw new Error(`Document insert error: ${docError.message}`);
 
-    // 3. extract text from PDF
-    const pdfData = await pdfParse(Buffer.from(fileBuffer));
-    const rawText = pdfData.text;
-    const pageCount = pdfData.numpages;
+    // 3. extract text from file
+    const { text: rawText, pageCount = 1 } = await extractText(
+      Buffer.from(fileBuffer),
+      file.type as any,
+    );
 
     if (!rawText || rawText.trim().length === 0) {
       await supabase

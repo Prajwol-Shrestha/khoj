@@ -1,17 +1,16 @@
-
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getGuestToken } from "@/lib/guest";
-import type { UploadResponse, ApiError } from "@/lib/types";
 import {
-  UploadIcon,
-  FileIcon,
   AlertIcon,
   CloseIcon,
+  FileIcon,
   SpinnerIcon,
+  UploadIcon,
 } from "@/components/Icons";
+import { getGuestToken } from "@/lib/guest";
+import type { ApiError, UploadResponse } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 
 type Phase = "idle" | "sending" | "processing" | "error";
 
@@ -20,6 +19,13 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const SUPPORTED_TYPES = [
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
 
 export default function UploadDropzone() {
   const router = useRouter();
@@ -93,12 +99,14 @@ export default function UploadDropzone() {
     (files: FileList | null) => {
       const file = files?.[0];
       if (!file) return;
-      if (file.type !== "application/pdf") {
+
+      if (!SUPPORTED_TYPES.includes(file.type)) {
         setActiveFile(file);
-        setError("Only PDF files are supported.");
+        setError("Supported formats: PDF, TXT, MD, DOCX");
         setPhase("error");
         return;
       }
+
       upload(file);
     },
     [upload],
@@ -119,7 +127,7 @@ export default function UploadDropzone() {
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept=".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="sr-only"
         onChange={(e) => handleFiles(e.target.files)}
       />
@@ -155,13 +163,17 @@ export default function UploadDropzone() {
           </span>
           <span className="space-y-1.5">
             <span className="block text-base font-medium text-ink">
-              {dragging ? "Release to ingest" : "Drop a PDF to begin"}
+              {dragging ? "Release to ingest" : `Drop a PDF, TXT, MD, or DOCX to begin`}
             </span>
             <span className="block text-sm text-muted">
-              or <span className="text-green underline underline-offset-4">browse files</span> from your device
+              or{" "}
+              <span className="text-green underline underline-offset-4">
+                browse files
+              </span>{" "}
+              from your device
             </span>
           </span>
-          <span className="mono-label">pdf · single document</span>
+          <span className="mono-label">pdf · txt · md · docx</span>{" "}
         </button>
       )}
 
@@ -172,7 +184,9 @@ export default function UploadDropzone() {
               <FileIcon size={18} />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">{activeFile.name}</p>
+              <p className="truncate text-sm font-medium text-ink">
+                {activeFile.name}
+              </p>
               <p className="mono-label mt-1">{formatBytes(activeFile.size)}</p>
             </div>
             <span className="font-mono text-xs tabular-nums text-muted">
@@ -220,9 +234,13 @@ export default function UploadDropzone() {
               <AlertIcon size={18} />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink">Couldn&apos;t process that file</p>
+              <p className="text-sm font-medium text-ink">
+                Couldn&apos;t process that file
+              </p>
               <p className="mt-1 text-sm text-muted">{error}</p>
-              {activeFile && <p className="mono-label mt-2 truncate">{activeFile.name}</p>}
+              {activeFile && (
+                <p className="mono-label mt-2 truncate">{activeFile.name}</p>
+              )}
             </div>
             <button
               type="button"
