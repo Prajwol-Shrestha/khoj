@@ -135,11 +135,12 @@ ${context}`,
           // groq doesn't support stream_options: { include_usage: true } yet,
           // it puts usage on the last chunk instead
           const completion = await groq.chat.completions.create({
-            model: "llama-3.1-8b-instant",
+            model: "qwen/qwen3.8-27b",
             messages,
-            max_tokens: 1024,
+            max_completion_tokens: 2048,
             temperature: 0.3,
             stream: true,
+            reasoning_effort: "default",
           });
 
           for await (const chunk of completion) {
