@@ -1,5 +1,6 @@
-import { jsonError, serverError } from "@/lib/api";
+import { getUser, jsonError, serverError } from "@/lib/api";
 import { embedQuery } from "@/lib/gemini";
+import { GUEST_TOKEN_KEY } from "@/lib/guest";
 import { rateLimit } from "@/lib/rate-limit";
 import { encodeEvent } from "@/lib/sse";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -85,6 +86,19 @@ async function condenseQuestion(
   }
 }
 
+// The admin client skips row level security, so ownership is checked here, by
+// the same rule the database applies to the browser: a signed-in user owns a
+// session by user_id, a guest by the token in their cookie.
+async function ownsSession(
+  req: NextRequest,
+  session: { user_id: string | null; session_token: string | null },
+): Promise<boolean> {
+  if (session.user_id) return (await getUser())?.id === session.user_id;
+
+  const token = req.cookies.get(GUEST_TOKEN_KEY)?.value;
+  return !!token && token === session.session_token;
+}
+
 export async function POST(req: NextRequest) {
   if (!rateLimit(req, 20)) return jsonError("Too many requests", 429);
 
@@ -99,11 +113,14 @@ export async function POST(req: NextRequest) {
 
     const { data: session, error: sessionError } = await supabase
       .from("chat_sessions")
-      .select("id, document_id, collection_id")
+      .select("id, document_id, collection_id, user_id, session_token")
       .eq("id", sessionId)
       .single();
 
-    if (sessionError || !session) return jsonError("Session not found", 404);
+    // someone else's session reads the same as a missing one, so ids can't be probed
+    if (sessionError || !session || !(await ownsSession(req, session))) {
+      return jsonError("Session not found", 404);
+    }
 
     // history comes from our own table, never the request body — a client could
     // forge assistant turns or stuff the prompt. Read it before saving the new

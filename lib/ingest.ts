@@ -63,23 +63,28 @@ export async function ingestFile(
 
   const extractPromise = extractText(buffer, mimeType);
 
-  const [uploadResult, insertResult, extractResult] = await Promise.all([
+  const [upload, insert, extract] = await Promise.allSettled([
     uploadPromise,
     insertPromise,
     extractPromise,
   ]);
 
-  if (uploadResult.error) {
-    throw new Error(`${file.name}: storage error — ${uploadResult.error.message}`);
-  }
-  if (insertResult.error) {
-    throw new Error(`${file.name}: ${insertResult.error.message}`);
+  // no row, nothing to mark as failed
+  if (insert.status === "rejected") throw insert.reason;
+  if (insert.value.error) {
+    throw new Error(`${file.name}: ${insert.value.error.message}`);
   }
 
-  const document = insertResult.data;
+  const document = insert.value.data;
 
   try {
-    const { text, pageCount = 1 } = extractResult;
+    if (upload.status === "rejected") throw upload.reason;
+    if (upload.value.error) {
+      throw new Error(`${file.name}: storage error — ${upload.value.error.message}`);
+    }
+    if (extract.status === "rejected") throw extract.reason;
+
+    const { text, pageCount = 1 } = extract.value;
     if (!text.trim()) {
       throw new Error(`Could not extract any text from ${file.name}`);
     }

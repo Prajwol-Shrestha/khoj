@@ -1,4 +1,4 @@
-const GUEST_TOKEN_KEY = "khoj_session_token";
+export const GUEST_TOKEN_KEY = "khoj_session_token";
 
 export function getGuestToken(): string {
   if (typeof window === "undefined") return "";

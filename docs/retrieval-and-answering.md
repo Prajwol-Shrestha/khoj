@@ -18,6 +18,7 @@ question -> rewrite with history -> embed -> find similar chunks -> ask the LLM 
 
 - Chat is limited to **20 requests per minute** per IP.
 - The session says what to search: one document or one collection.
+- The session must belong to the caller. A signed-in user's session needs that user. A guest's session needs the matching guest cookie. Otherwise the reply is "Session not found" (404), the same as for a session that does not exist.
 - The **last 10 messages** of the conversation are loaded **from the database**, not from the browser. This happens before the new question is saved, so the question is not in its own history.
 - The user's question is saved to `messages`.
 

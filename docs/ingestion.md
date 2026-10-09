@@ -71,10 +71,10 @@ The document's `status` shows where it is:
 
 ```
 processing  ->  ready      (chunks saved)
-            ->  error      (no text found, or chunking, embedding or saving chunks failed)
+            ->  error      (anything failed after the row was created)
 ```
 
-The `error` state exists so a failed file does not sit on "processing" forever. It does not catch every failure, see "Things to know".
+The `error` state exists so a failed file does not sit on "processing" forever. It covers every failure after the row is created: the Storage upload, reading the file (for example a corrupt PDF), finding no text, chunking, embedding and saving chunks.
 
 ### 5. Open a conversation
 
@@ -107,7 +107,7 @@ If the user had uploaded `handbook.pdf` + `policy.pdf` + `faq.docx`, the same ha
 
 ## Things to know
 
-- **Some failures leave the row on "processing".** If the file upload to Storage fails, or the text extraction itself throws (for example a corrupt PDF), the `documents` row has already been created and is never moved to `error`. Only failures after extraction are marked.
+- **A crash can still leave the row on "processing".** If the server is killed mid-upload (for example by a time limit), nothing gets to mark the row as `error`.
 - **Slow for big files.** Everything happens inside one request. A very large PDF can hit server time limits.
 - **Chunks do not know their page.** Only the total page count is saved.
 - **Same file twice = stored twice.** There is no duplicate check.

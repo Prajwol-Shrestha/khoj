@@ -2,7 +2,7 @@
 
 Khoj lets you upload documents and chat with them. Ask a question, and the answer comes only from what is in your files.
 
-It is a **naive RAG** (retrieve, then read): cut documents into chunks, turn each chunk into a vector, and when a question arrives, find the closest chunks and hand only those to an LLM.
+It is a basic RAG (retrieve, then read) with query rewriting: cut documents into chunks, turn each chunk into a vector, and when a question arrives, rewrite it using the chat history, find the closest chunks and hand only those to an LLM.
 
 ![Khoj RAG overview](images/overview.webp)
 

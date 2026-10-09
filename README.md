@@ -8,7 +8,7 @@ Built with Next.js, Supabase (Postgres, Storage, Google sign-in), Gemini embeddi
 
 ## How it works
 
-Khoj is a naive RAG: documents are cut into chunks, each chunk becomes a vector, and a question is answered from the closest chunks only.
+Khoj is a basic RAG with query rewriting: documents are cut into chunks, each chunk becomes a vector, and a question is rewritten using the chat history and answered from the closest chunks only.
 
 ![Khoj RAG overview](docs/images/overview.webp)
 

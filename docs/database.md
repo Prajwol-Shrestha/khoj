@@ -80,7 +80,9 @@ The browser sends that header on every request (`lib/supabase/client.ts`), using
 **The server bypasses RLS.** The API routes use the service-role key (`lib/supabase/admin.ts`), which ignores every policy. So on the server, access control is only what the code checks:
 
 - `DELETE` and `PATCH` on documents and collections check `user_id` in code, and need a signed-in user.
-- `POST /api/chat` checks nothing about who owns the `sessionId`. Anyone who knows a session id can ask questions and get answers and sources from that document. Session ids are random UUIDs, so they cannot be guessed, but the route does not enforce ownership.
+- `POST /api/chat` checks ownership before it does anything. A session with a `user_id` needs that signed-in user. A guest session needs the matching `khoj_session_token` cookie. Anything else gets the same "Session not found" (404) as a missing session, so ids cannot be probed.
+
+When a guest signs in, `app/auth/callback/route.ts` moves their documents, collections and sessions to their account (it sets `user_id` and clears `session_token`), so old guest chats keep working.
 
 ## What gets deleted with what
 
