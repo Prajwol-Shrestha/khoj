@@ -50,13 +50,8 @@ export function useChat(id: string, initialSessionId?: string) {
   const [ready, setReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
-  // read through refs so send() keeps a stable identity — messages change on every streamed token
-  const messagesRef = useRef<ChatMessage[]>([]);
+  // a ref, not state, so send() keeps a stable identity
   const sendingRef = useRef(false);
-
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,15 +171,10 @@ export function useChat(id: string, initialSessionId?: string) {
         );
 
       try {
-        const history = messagesRef.current
-          .filter((m) => !m.pending && !m.error)
-          .slice(-10)
-          .map((m) => ({ role: m.role, content: m.content }));
-
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, sessionId, history }),
+          body: JSON.stringify({ question, sessionId }),
         });
 
         if (!res.ok) {

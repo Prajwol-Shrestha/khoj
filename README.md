@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Khoj
 
-## Getting Started
+Upload documents and chat with them. Ask a question, and the answer comes only from what is in your files, with the source passages shown next to it.
 
-First, run the development server:
+Supports PDF, DOCX, TXT and Markdown. Upload one file to chat with it, or up to three to chat across all of them.
+
+Built with Next.js, Supabase (Postgres, Storage, Google sign-in), Gemini embeddings and a Groq-hosted LLM.
+
+## How it works
+
+Khoj is a naive RAG: documents are cut into chunks, each chunk becomes a vector, and a question is answered from the closest chunks only.
+
+![Khoj RAG overview](docs/images/overview.webp)
+
+**Read the docs to understand the system: [docs/](docs/README.md)**
+
+- [Chunking](docs/chunking.md): how text is cut into chunks, with examples
+- [Ingestion](docs/ingestion.md): upload to vectors in the database
+- [Retrieval and answering](docs/retrieval-and-answering.md): question to streamed answer
+- [Database](docs/database.md): tables, the search function, access rules
+
+## Run locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Create `.env.local` first:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | What it is |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key (used in the browser) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server only, never expose it) |
+| `GEMINI_API_KEY` | Google Gemini, for embeddings |
+| `GROQ_API_KEY` | Groq, for the LLM |
+| `NEXT_PUBLIC_SITE_URL` | Public site URL, used for metadata, robots and sitemap (optional) |
 
-## Learn More
+The Supabase project also needs a Storage bucket named `documents`, Google sign-in enabled, and the database tables and `match_chunks` function. The SQL is in [docs/schema.sql](docs/schema.sql).
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Start the dev server |
+| `pnpm build` | Production build |
+| `pnpm start` | Run the production build |
+| `pnpm lint` | Run ESLint |

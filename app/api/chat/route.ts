@@ -1,5 +1,6 @@
 import { jsonError, serverError } from "@/lib/api";
 import { embedQuery } from "@/lib/gemini";
+import { rateLimit } from "@/lib/rate-limit";
 import { encodeEvent } from "@/lib/sse";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Role, SourceChunkData } from "@/lib/types";
@@ -12,6 +13,11 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 const SIMILARITY_THRESHOLD = 0.5;
 const MAX_HISTORY_MESSAGES = 10;
 const NO_ANSWER = "I couldn't find that information in the document.";
+
+// small and fast: it only rewrites one line, so it shouldn't add noticeable latency
+const CONDENSE_MODEL = "openai/gpt-oss-20b";
+const CONDENSE_CONTEXT_MESSAGES = 4;
+const CONDENSE_SNIPPET_CHARS = 500;
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -31,16 +37,59 @@ interface HistoryMessage {
 interface ChatRequestBody {
   question?: string;
   sessionId?: string;
-  history?: HistoryMessage[];
+}
+
+// "and the second one?" embeds to nothing useful on its own. Rewrite it into a
+// standalone query using the recent conversation. Retrieval only — the answer
+// prompt still gets the user's original wording. Any failure falls back to the
+// raw question, so this can only help, never block a reply.
+async function condenseQuestion(
+  question: string,
+  history: HistoryMessage[],
+): Promise<string> {
+  if (history.length === 0) return question;
+
+  const transcript = history
+    .slice(-CONDENSE_CONTEXT_MESSAGES)
+    .map(
+      (m) =>
+        `${m.role === "user" ? "User" : "Assistant"}: ${m.content.slice(0, CONDENSE_SNIPPET_CHARS)}`,
+    )
+    .join("\n");
+
+  try {
+    const res = await groq.chat.completions.create({
+      model: CONDENSE_MODEL,
+      temperature: 0,
+      max_completion_tokens: 512, // reasoning tokens count against this
+      reasoning_effort: "low",
+      messages: [
+        {
+          role: "system",
+          content:
+            "Rewrite the user's last message as a standalone search query for finding passages in a document. " +
+            'Resolve references like "it", "that", "the second one" using the conversation. ' +
+            "Keep names and key terms. If the message already stands alone, return it unchanged. " +
+            "Output only the query — no quotes, no explanation.",
+        },
+        {
+          role: "user",
+          content: `Conversation:\n${transcript}\n\nLast message: ${question}`,
+        },
+      ],
+    });
+    return res.choices[0]?.message?.content?.trim() || question;
+  } catch (error) {
+    console.error("Condense failed, using raw question:", error);
+    return question;
+  }
 }
 
 export async function POST(req: NextRequest) {
+  if (!rateLimit(req, 20)) return jsonError("Too many requests", 429);
+
   try {
-    const {
-      question,
-      sessionId,
-      history = [],
-    } = (await req.json()) as ChatRequestBody;
+    const { question, sessionId } = (await req.json()) as ChatRequestBody;
 
     if (!question || !sessionId) {
       return jsonError("question and sessionId are required", 400);
@@ -56,13 +105,27 @@ export async function POST(req: NextRequest) {
 
     if (sessionError || !session) return jsonError("Session not found", 404);
 
+    // history comes from our own table, never the request body — a client could
+    // forge assistant turns or stuff the prompt. Read it before saving the new
+    // question so the question isn't in its own history.
+    const { data: past, error: historyError } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(MAX_HISTORY_MESSAGES);
+    if (historyError) throw new Error(`History error: ${historyError.message}`);
+    const history = ((past ?? []) as HistoryMessage[]).reverse();
+
     await supabase.from("messages").insert({
       session_id: sessionId,
       role: "user",
       content: question,
     });
 
-    const questionEmbedding = await embedQuery(question);
+    const questionEmbedding = await embedQuery(
+      await condenseQuestion(question, history),
+    );
 
     const { data: chunks, error: searchError } = await supabase.rpc(
       "match_chunks",
@@ -111,9 +174,7 @@ Do not make up information. Be concise and clear.
 Context from document:
 ${context}`,
       },
-      ...history
-        .slice(-MAX_HISTORY_MESSAGES)
-        .map(({ role, content }) => ({ role, content })),
+      ...history,
       { role: "user" as const, content: question },
     ];
 
