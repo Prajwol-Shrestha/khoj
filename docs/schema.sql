@@ -3,6 +3,9 @@
 -- Rebuilt by hand from the live database's catalog, not produced by pg_dump,
 -- and not yet run against an empty database. Check it before relying on it.
 -- Explained in docs/database.md.
+--
+-- Applying this to a database created before summaries existed? Run only:
+--   alter table public.documents add column if not exists summary text;
 
 create extension if not exists vector;
 create extension if not exists "uuid-ossp";
@@ -29,6 +32,7 @@ create table public.documents (
                 check (status in ('processing', 'ready', 'error')),
   page_count    integer,
   chunk_count   integer,
+  summary       text,  -- reference summary used for overview questions (lib/summary.ts)
   created_at    timestamptz default now(),
   pinned        boolean default false
 );

@@ -4,6 +4,8 @@ Code: `lib/chunker.ts`. Settings: **chunk size 900 chars, overlap 150 chars.**
 
 ![Chunking pipeline](images/chunking.webp)
 
+The diagram shows the order of cuts. It leaves out the 150-character overlap between chunks and the dropping of chunks of 20 characters or fewer, both covered below.
+
 ## Why chunk at all
 
 The LLM cannot read a whole PDF for every question. So the text is cut into small pieces called **chunks** (think index cards). Each chunk is turned into a vector and stored. When you ask something, the search finds the best few chunks, and only those go to the LLM.

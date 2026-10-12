@@ -22,7 +22,7 @@ erDiagram
 | Table | One row is | Key columns |
 |---|---|---|
 | `profiles` | a signed-in user (created automatically by the `on_auth_user_created` trigger on `auth.users`) | `id` (same as the auth user id), `email`, `name`, `avatar_url` |
-| `documents` | an uploaded file | `title`, `file_name`, `status`, `page_count`, `chunk_count`, `pinned`, owner |
+| `documents` | an uploaded file | `title`, `file_name`, `status`, `page_count`, `chunk_count`, `summary`, `pinned`, owner |
 | `chunks` | one ~900-char slice of a document | `document_id`, `content`, `chunk_index`, `embedding` |
 | `collections` | a group of 2 to 3 documents | `title`, `pinned`, owner |
 | `collection_documents` | a link between a collection and a document | `collection_id`, `document_id` |
@@ -37,6 +37,7 @@ A signed-in user uploads `handbook.pdf` (12 pages), then asks one question.
 
 ```
 documents   id=d1  title="handbook"  status="ready"  page_count=12  chunk_count=40  user_id=u1
+            summary="- Employee handbook for ... " (filled in shortly after the upload)
 chunks      40 rows: (document_id=d1, chunk_index=0..39, content="...", embedding=[768 numbers])
 chat_sessions  id=s1  document_id=d1  collection_id=NULL  user_id=u1
 messages    (session_id=s1, role="user",      content="How long do refunds take?")
@@ -111,3 +112,4 @@ Bucket `documents` holds the original uploads. It is **private**, and allows onl
   drop function public.match_chunks(vector, uuid, integer);
   ```
 - **A session should point at exactly one thing.** Nothing in the database stops a `chat_sessions` row from having both `document_id` and `collection_id`, or neither. The upload route sets exactly one.
+- **Summaries cover at most the first 1000 chunks.** `lib/summary.ts` reads a document's chunks in one query, and Supabase returns at most 1000 rows by default. Past that (about 750,000 characters), the summary leaves out the end of the document.

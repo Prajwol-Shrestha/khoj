@@ -6,10 +6,13 @@ Code: `app/api/upload/route.ts` (the request) and `lib/ingest.ts` (one file).
 
 ![Ingestion pipeline](images/ingestion.webp)
 
+The diagram shows the main path. It leaves out the checks before anything is stored, the original file going to Storage, and the `ready` / `error` status, all covered below.
+
 ## The flow in one line
 
 ```
 file -> parse to text -> clean and chunk -> embed each chunk -> store -> open a conversation
+                                                                   (summary built in the background)
 ```
 
 ## Before anything is stored
@@ -76,7 +79,13 @@ processing  ->  ready      (chunks saved)
 
 The `error` state exists so a failed file does not sit on "processing" forever. It covers every failure after the row is created: the Storage upload, reading the file (for example a corrupt PDF), finding no text, chunking, embedding and saving chunks.
 
-### 5. Open a conversation
+### 5. Summary, in the background
+
+Once the chunks are saved, a short **summary of the whole document** is built and saved in `documents.summary`. Overview questions such as "what are the key points?" read it, because search cannot answer them (see [Retrieval and answering](retrieval-and-answering.md)).
+
+It runs after the response has gone out (`after()` in `lib/ingest.ts`), so the upload does not wait for it. The document is `ready` and chattable straight away. If the summary fails or is not done yet, the first overview question builds it.
+
+### 6. Open a conversation
 
 After ingestion, a chat session is created. What it points at depends on how many files were uploaded:
 
@@ -97,6 +106,7 @@ A signed-in user uploads `handbook.pdf` (12 pages).
 4. Embedding: 40 chunks fit in one request of 50.
 5. Saved: the PDF in Storage, 1 `documents` row (`status = ready`, `page_count = 12`, `chunk_count = 40`), and 40 `chunks` rows with vectors.
 6. One `chat_sessions` row is created, and the user lands in the chat.
+7. A moment later, a summary of the handbook is saved on the `documents` row.
 
 If the user had uploaded `handbook.pdf` + `policy.pdf` + `faq.docx`, the same happens three times, then one collection links the three documents and one session covers all of them.
 

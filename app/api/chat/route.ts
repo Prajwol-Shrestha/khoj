@@ -4,6 +4,7 @@ import { GUEST_TOKEN_KEY } from "@/lib/guest";
 import { rateLimit } from "@/lib/rate-limit";
 import { encodeEvent } from "@/lib/sse";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getOverview, getSummaryIfReady } from "@/lib/summary";
 import type { Role, SourceChunkData } from "@/lib/types";
 import Groq from "groq-sdk";
 import type { CompletionUsage } from "groq-sdk/resources/completions";
@@ -15,10 +16,29 @@ const SIMILARITY_THRESHOLD = 0.5;
 const MAX_HISTORY_MESSAGES = 10;
 const NO_ANSWER = "I couldn't find that information in the document.";
 
-// small and fast: it only rewrites one line, so it shouldn't add noticeable latency
-const CONDENSE_MODEL = "openai/gpt-oss-20b";
-const CONDENSE_CONTEXT_MESSAGES = 4;
-const CONDENSE_SNIPPET_CHARS = 500;
+// Fallback for an overview when no summary can be had: the closest chunks, with
+// no score cutoff, since "key points?" matches no passage in particular.
+const OVERVIEW_FALLBACK_CHUNKS = 8;
+
+// small and fast: it only labels and rewrites one line, so it shouldn't add noticeable latency
+const ROUTER_MODEL = "openai/gpt-oss-20b";
+const ROUTER_CONTEXT_MESSAGES = 4;
+const ROUTER_SNIPPET_CHARS = 500;
+
+const ROUTER_PROMPT = `You route messages in a chat about ONE uploaded document.
+Reply with JSON only: {"intent": "...", "query": "..."}
+
+intent, pick one:
+- "chat": greetings, thanks, acknowledgements or other small talk that needs nothing from the document ("hi", "ok", "thanks!").
+- "overview": asks for a summary, key points, main ideas, or what the whole document is about.
+- "question": anything else, a specific question about what the document says.
+
+query: the last message rewritten as a standalone search query. Resolve references like "he", "it", "the second one" using the conversation. Keep names and key terms. If it already stands alone, return it unchanged. For "chat" and "overview", copy the message.`;
+
+const CHAT_PROMPT = `You are the assistant in a chat about an uploaded document. The user is making small talk or acknowledging your last reply. Answer in one short, friendly sentence and invite a question about the document. Do not state facts about the document.`;
+
+type Intent = "question" | "overview" | "chat";
+const INTENTS: Intent[] = ["question", "overview", "chat"];
 
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
@@ -40,49 +60,51 @@ interface ChatRequestBody {
   sessionId?: string;
 }
 
-// "and the second one?" embeds to nothing useful on its own. Rewrite it into a
-// standalone query using the recent conversation. Retrieval only — the answer
-// prompt still gets the user's original wording. Any failure falls back to the
-// raw question, so this can only help, never block a reply.
-async function condenseQuestion(
+// One cheap call decides how to handle a message: look something up, summarize,
+// or just chat. For lookups it also rewrites the message into a standalone query,
+// because "and the second one?" embeds to nothing useful on its own. The rewrite is
+// for retrieval only; the answer prompt still gets the user's original wording.
+// Any failure falls back to a plain question, so this can only help, never block a reply.
+async function routeMessage(
   question: string,
   history: HistoryMessage[],
-): Promise<string> {
-  if (history.length === 0) return question;
-
-  const transcript = history
-    .slice(-CONDENSE_CONTEXT_MESSAGES)
-    .map(
-      (m) =>
-        `${m.role === "user" ? "User" : "Assistant"}: ${m.content.slice(0, CONDENSE_SNIPPET_CHARS)}`,
-    )
-    .join("\n");
+): Promise<{ intent: Intent; query: string }> {
+  const transcript =
+    history
+      .slice(-ROUTER_CONTEXT_MESSAGES)
+      .map(
+        (m) =>
+          `${m.role === "user" ? "User" : "Assistant"}: ${m.content.slice(0, ROUTER_SNIPPET_CHARS)}`,
+      )
+      .join("\n") || "(none)";
 
   try {
     const res = await groq.chat.completions.create({
-      model: CONDENSE_MODEL,
+      model: ROUTER_MODEL,
       temperature: 0,
       max_completion_tokens: 512, // reasoning tokens count against this
       reasoning_effort: "low",
+      response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "Rewrite the user's last message as a standalone search query for finding passages in a document. " +
-            'Resolve references like "it", "that", "the second one" using the conversation. ' +
-            "Keep names and key terms. If the message already stands alone, return it unchanged. " +
-            "Output only the query — no quotes, no explanation.",
-        },
+        { role: "system", content: ROUTER_PROMPT },
         {
           role: "user",
           content: `Conversation:\n${transcript}\n\nLast message: ${question}`,
         },
       ],
     });
-    return res.choices[0]?.message?.content?.trim() || question;
+
+    const parsed = JSON.parse(res.choices[0]?.message?.content ?? "");
+    return {
+      intent: INTENTS.includes(parsed.intent) ? parsed.intent : "question",
+      query:
+        typeof parsed.query === "string" && parsed.query.trim()
+          ? parsed.query.trim()
+          : question,
+    };
   } catch (error) {
-    console.error("Condense failed, using raw question:", error);
-    return question;
+    console.error("Routing failed, treating as a question:", error);
+    return { intent: "question", query: question };
   }
 }
 
@@ -140,56 +162,103 @@ export async function POST(req: NextRequest) {
       content: question,
     });
 
-    const questionEmbedding = await embedQuery(
-      await condenseQuestion(question, history),
-    );
+    const { intent, query } = await routeMessage(question, history);
 
-    const { data: chunks, error: searchError } = await supabase.rpc(
-      "match_chunks",
-      {
-        query_embedding: questionEmbedding,
-        match_document_id: session.document_id,
-        match_collection_id: session.collection_id,
-        match_count: session.collection_id ? 5 : 3,
-      },
-    );
-    if (searchError) throw new Error(`Search error: ${searchError.message}`);
+    // small talk ("ok", "thanks") needs no passages at all
+    let relevantChunks: MatchedChunk[] = [];
 
-    const relevantChunks = ((chunks as MatchedChunk[]) ?? []).filter(
-      (c) => c.similarity >= SIMILARITY_THRESHOLD,
-    );
-
-    if (relevantChunks.length === 0) {
-      await supabase.from("messages").insert({
-        session_id: sessionId,
-        role: "assistant",
-        content: NO_ANSWER,
-        source_chunks: [],
-      });
-
-      return new Response(
-        Buffer.concat([
-          encodeEvent({ type: "sources", sources: [] }),
-          encodeEvent({ type: "token", content: NO_ANSWER }),
-          encodeEvent({ type: "done" }),
-        ]),
-        { headers: SSE_HEADERS },
-      );
+    // an overview reads the document's summary, not search hits: the closest
+    // chunks to "key points?" are arbitrary, and on a long document most of it
+    // would be missing
+    let overview: string | null = null;
+    if (intent === "overview") {
+      try {
+        overview = await getOverview(session);
+      } catch (error) {
+        console.error("Overview failed, falling back to the closest chunks:", error);
+      }
     }
 
-    const context = relevantChunks
+    // ordinary questions also get the summary, read while the search runs
+    const summaryRead =
+      intent === "question"
+        ? getSummaryIfReady(session).catch((error) => {
+            console.error("Summary read failed, answering from passages only:", error);
+            return null;
+          })
+        : Promise.resolve(null);
+
+    let summary: string | null = null;
+
+    if (intent === "question" || (intent === "overview" && !overview)) {
+      const { data: chunks, error: searchError } = await supabase.rpc(
+        "match_chunks",
+        {
+          query_embedding: await embedQuery(query),
+          match_document_id: session.document_id,
+          match_collection_id: session.collection_id,
+          match_count:
+            intent === "overview"
+              ? OVERVIEW_FALLBACK_CHUNKS
+              : session.collection_id
+                ? 5
+                : 3,
+        },
+      );
+      if (searchError) throw new Error(`Search error: ${searchError.message}`);
+
+      relevantChunks = ((chunks as MatchedChunk[]) ?? []).filter(
+        (c) => intent === "overview" || c.similarity >= SIMILARITY_THRESHOLD,
+      );
+
+      summary = await summaryRead;
+
+      // nothing matched, but the summary may still hold the answer, so the model
+      // gets to look; only with neither is there nothing to say
+      if (relevantChunks.length === 0 && !summary) {
+        await supabase.from("messages").insert({
+          session_id: sessionId,
+          role: "assistant",
+          content: NO_ANSWER,
+          source_chunks: [],
+        });
+
+        return new Response(
+          Buffer.concat([
+            encodeEvent({ type: "sources", sources: [] }),
+            encodeEvent({ type: "token", content: NO_ANSWER }),
+            encodeEvent({ type: "done" }),
+          ]),
+          { headers: SSE_HEADERS },
+        );
+      }
+    }
+
+    const passages = relevantChunks
       .map((c, i) => `[Chunk ${i + 1}]:\n${c.content}`)
       .join("\n\n");
+
+    const material =
+      overview ??
+      [
+        summary && `Document summary:\n${summary}`,
+        passages && `Passages:\n${passages}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+    const answerPrompt = `You are a helpful assistant that answers questions based strictly on the provided document material.
+The material may include a summary of the whole document and passages from it. Use the summary for basic facts about the document (what it is, who or what it is about, names) and the passages for details.
+If the answer is not in the material, say "${NO_ANSWER}"
+Do not make up information. Be concise and clear.
+${intent === "overview" ? "The user wants an overview of the document. Answer from the material below; if it seems to cover only part of the document, say so.\n" : ""}
+Document material:
+${material}`;
 
     const messages = [
       {
         role: "system" as const,
-        content: `You are a helpful assistant that answers questions based strictly on the provided document context.
-If the answer is not in the context, say "I couldn't find that information in the document."
-Do not make up information. Be concise and clear.
-
-Context from document:
-${context}`,
+        content: intent === "chat" ? CHAT_PROMPT : answerPrompt,
       },
       ...history,
       { role: "user" as const, content: question },

@@ -3,6 +3,8 @@ import { extractText } from "@/lib/extractor";
 import { isSupportedType, titleFromFileName } from "@/lib/files";
 import { embedBatch } from "@/lib/gemini";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { generateSummary } from "@/lib/summary";
+import { after } from "next/server";
 
 // Guests own their rows through a browser-local token; signed-in users through user_id.
 export interface Owner {
@@ -110,6 +112,14 @@ export async function ingestFile(
         chunk_count: chunks.length,
       })
       .eq("id", document.id);
+
+    // built once the response has gone out, so the upload doesn't wait on it. If it
+    // fails, the first overview question builds it instead (lib/summary.ts)
+    after(() =>
+      generateSummary(document.id).catch((error) =>
+        console.error(`Summary failed for ${file.name}:`, error),
+      ),
+    );
 
     return { id: document.id, title, pageCount, chunkCount: chunks.length };
   } catch (error) {
