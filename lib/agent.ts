@@ -8,19 +8,17 @@ const MODEL = "openai/gpt-oss-120b";
 const MAX_STEPS = 4;
 
 type Message = Groq.Chat.ChatCompletionMessageParam;
-type ToolChoice = "auto" | "required" | "none";
+type ToolCall = Groq.Chat.ChatCompletionMessageToolCall;
+type ToolResult = { content: string; outcome: string };
 
 export interface AgentTool {
   name: string;
   definition: Groq.Chat.ChatCompletionTool;
   // content goes back to the model, outcome is the short line shown in the UI
-  run: (
-    args: Record<string, unknown>,
-  ) => Promise<{ content: string; outcome: string }>;
+  run: (args: Record<string, unknown>) => Promise<ToolResult>;
 }
 
-// every tool gets a required `reason`, listed first so the model explains itself
-// before filling in the rest. the UI shows it as the agent's thinking
+// `reason` is listed first so the model explains itself before filling in the rest
 export function defineTool(
   name: string,
   description: string,
@@ -49,11 +47,10 @@ export function defineTool(
   };
 }
 
-// tool calls arrive in pieces, stitched together by index
 async function streamPass(
   messages: Message[],
   tools: AgentTool[],
-  toolChoice: ToolChoice,
+  toolChoice: "auto" | "none",
   onToken: (token: string) => void,
 ) {
   const completion = await groq.chat.completions.create({
@@ -69,7 +66,7 @@ async function streamPass(
 
   let content = "";
   let tokensUsed = 0;
-  const calls: { id: string; name: string; arguments: string }[] = [];
+  const calls: ToolCall[] = [];
 
   for await (const chunk of completion) {
     const delta = chunk.choices[0]?.delta;
@@ -80,10 +77,14 @@ async function streamPass(
     }
 
     for (const piece of delta?.tool_calls ?? []) {
-      const call = (calls[piece.index] ??= { id: "", name: "", arguments: "" });
+      const call = (calls[piece.index] ??= {
+        id: "",
+        type: "function",
+        function: { name: "", arguments: "" },
+      });
       if (piece.id) call.id = piece.id;
-      if (piece.function?.name) call.name += piece.function.name;
-      if (piece.function?.arguments) call.arguments += piece.function.arguments;
+      if (piece.function?.name) call.function.name += piece.function.name;
+      if (piece.function?.arguments) call.function.arguments += piece.function.arguments;
     }
 
     // groq puts usage on the last chunk
@@ -95,69 +96,48 @@ async function streamPass(
   return { content, calls, tokensUsed };
 }
 
-// text streamed before a tool call is the model thinking aloud, not the answer,
-// so callers should drop what onToken gave them when onStep fires
+// a failing tool becomes a result, so the model can read the error and try something else
+async function runTool(tool: AgentTool | undefined, call: ToolCall) {
+  let args: Record<string, unknown> = {};
+  try {
+    if (!tool) throw new Error(`Unknown tool: ${call.function.name}`);
+    args = JSON.parse(call.function.arguments || "{}");
+    return { args, result: await tool.run(args) };
+  } catch (error) {
+    console.error(`Tool ${call.function.name} failed:`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    const result = { content: `Error: ${message}`, outcome: `failed: ${message.slice(0, 120)}` };
+    return { args, result };
+  }
+}
+
 export async function runAgent(opts: {
   system: string;
   history: { role: "user" | "assistant"; content: string }[];
   tools: AgentTool[];
   onToken: (token: string) => void;
+  // fires after each tool call. text streamed before it was the model thinking aloud
   onStep: (step: AgentStep) => void;
 }): Promise<{ answer: string; tokensUsed: number }> {
-  const messages: Message[] = [
-    { role: "system", content: opts.system },
-    ...opts.history,
-  ];
+  const messages: Message[] = [{ role: "system", content: opts.system }, ...opts.history];
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   let tokensUsed = 0;
 
-  for (let round = 1; round <= MAX_STEPS + 1; round++) {
-    // first round has to use a tool, otherwise the model sometimes says "not
-    // found" without looking. last round can't, so there's always an answer.
-    const toolChoice =
-      round > MAX_STEPS ? "none" : round === 1 ? "required" : "auto";
-
-    let pass;
-    try {
-      pass = await streamPass(messages, opts.tools, toolChoice, opts.onToken);
-    } catch (error) {
-      // gpt-oss sometimes refuses a forced tool call (small talk), let it answer
-      if (toolChoice !== "required" || !String(error).includes("Tool choice is required")) {
-        throw error;
-      }
-      pass = await streamPass(messages, opts.tools, "auto", opts.onToken);
-    }
+  for (let round = 0; round <= MAX_STEPS; round++) {
+    // the last round has no tools, so the loop always ends in an answer
+    const toolChoice = round === MAX_STEPS ? "none" : "auto";
+    const pass = await streamPass(messages, opts.tools, toolChoice, opts.onToken);
     tokensUsed += pass.tokensUsed;
 
     if (pass.calls.length === 0) return { answer: pass.content, tokensUsed };
 
-    messages.push({
-      role: "assistant",
-      content: pass.content,
-      tool_calls: pass.calls.map((c) => ({
-        id: c.id,
-        type: "function",
-        function: { name: c.name, arguments: c.arguments },
-      })),
-    });
+    messages.push({ role: "assistant", content: pass.content, tool_calls: pass.calls });
 
     for (const call of pass.calls) {
-      let args: Record<string, unknown> = {};
-      let result: { content: string; outcome: string };
-      try {
-        const tool = byName.get(call.name);
-        if (!tool) throw new Error(`Unknown tool: ${call.name}`);
-        args = JSON.parse(call.arguments || "{}");
-        result = await tool.run(args);
-      } catch (error) {
-        console.error(`Tool ${call.name} failed:`, error);
-        const message = error instanceof Error ? error.message : String(error);
-        result = { content: `Error: ${message}`, outcome: `failed: ${message.slice(0, 120)}` };
-      }
-
+      const { args, result } = await runTool(byName.get(call.function.name), call);
       messages.push({ role: "tool", tool_call_id: call.id, content: result.content });
       opts.onStep({
-        tool: call.name,
+        tool: call.function.name,
         reason: typeof args.reason === "string" ? args.reason : undefined,
         query: typeof args.query === "string" ? args.query : undefined,
         outcome: result.outcome,

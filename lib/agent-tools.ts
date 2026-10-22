@@ -20,7 +20,7 @@ export function documentTools(
   return [
     defineTool(
       "search_document",
-      "Search the document for passages that answer a specific question or detail. Returns the closest passages with similarity scores. Use specific keywords, not a full sentence.",
+      "Search the document for passages that answer a specific question or detail. Returns the closest passages with similarity scores. Write a short descriptive phrase with the important terms, never a single word.",
       {
         query: {
           type: "string",
@@ -82,12 +82,12 @@ export function documentTools(
 
     defineTool(
       "no_lookup_needed",
-      "Call this ONLY when the message is a greeting, thanks or other small talk that asks nothing about the document. Never use it for a question.",
+      "Call this when the message is a greeting, thanks, small talk, or has nothing to do with the document (general knowledge, questions about you). Never use it for a question about the document.",
       {},
       async () => ({
         content:
-          "Reply in one short, friendly sentence and invite a question about the document. Do not state facts about the document.",
-        outcome: "small talk, no lookup",
+          "Reply in one or two friendly sentences. Never answer from your own knowledge: if the user asked about something unrelated to the document, say you can only help with the document. Invite a question about it.",
+        outcome: "no lookup needed",
       }),
     ),
   ];
