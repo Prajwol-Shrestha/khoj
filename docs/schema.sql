@@ -154,7 +154,7 @@ create policy "collection_documents access" on public.collection_documents
   );
 
 -- Search: the closest chunks to a question, inside one document or one collection.
--- similarity = 1 - cosine distance (1 = same meaning). Called from app/api/chat/route.ts.
+-- similarity = 1 - cosine distance (1 = same meaning). Called by the search_document tool (lib/agent-tools.ts).
 create or replace function public.match_chunks(
   query_embedding     vector,
   match_document_id   uuid default null,

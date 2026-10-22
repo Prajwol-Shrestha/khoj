@@ -1,160 +1,125 @@
 # Retrieval and answering
 
-What happens between "user presses Send" and "the answer finishes streaming".
+What happens from pressing Send to the last word of the answer.
 
-Code: `app/api/chat/route.ts`. Embedding: `lib/gemini.ts`. Summaries: `lib/summary.ts`.
+Code: `app/api/chat/route.ts` (the route and the system prompt), `lib/agent.ts` (the loop), `lib/agent-tools.ts` (the three tools), `lib/summary.ts` (summaries), `lib/gemini.ts` (embeddings).
 
 ![Output pipeline](images/retrieval.webp)
 
-The diagram shows the router and its three paths: question, overview and chat. It leaves out a few details, all covered below:
+The model gets the conversation and a short list of tools. It decides whether to search the document, read a stored summary, or just reply to small talk. Our code runs whatever it asks for and gives the result back. Once the model has what it needs, it writes the answer.
 
-- When no chunk reaches 0.5, the answer can still come from the summary alone, or be the fixed "couldn't find it" reply (step 4).
-- A question also gets the summary next to its chunks (step 5).
-- The answer LLM also gets the last 10 messages (step 5).
-- If the summary cannot be read or built, an overview uses the 8 closest chunks instead ("Overview questions").
+## One question, start to finish
 
-## The flow in one line
+The user uploaded `handbook.pdf` and asks "How long do refunds take?"
+
+Before the model is called, the route does a few checks, loads the last 10 messages and saves the question (see "Before the model is called" below). Then the model is called with the system prompt, the history, the question and the tool list.
+
+**Call 1.** The model replies with a tool call and no text:
 
 ```
-message -> route (what is it? rewrite it) -> find what to read -> ask the LLM -> stream the answer -> save
+search_document
+  reason: "Find how long refunds take"
+  query:  "refund processing time"
 ```
 
-## Step by step
+Our code turns that query into a vector with Gemini and asks the database for the closest chunks of this document. Only chunks scoring 0.5 or more are kept:
 
-### 0. Checks and history
+```
+0.71  "Refunds take 5 to 7 business days to appear."
+0.64  "To request a refund, email support..."
+0.52  "Refunds are allowed within 30 days of purchase."
+```
 
-- Chat is limited to **20 requests per minute** per IP.
+Three chunks come back for a single document, five for a collection. For a question the document can't answer, the scores might be `0.31, 0.28, 0.22`. All are under 0.5, so the tool returns "no passages matched".
+
+**Call 2.** The passages go back to the model as the tool's result. It reads them and writes the answer, which streams to the browser as it is written:
+
+```
+Refunds take 5 to 7 business days.
+```
+
+That's two model calls. The first one decides, the second one answers.
+
+## Other kinds of messages
+
+**A follow-up.** The next message is "and if I don't get one?". The model sees the history, so it writes a query that makes sense on its own, something like "what to do if a refund doesn't arrive". There is no separate step that rewrites the question. The model writes the query as the argument of the tool call.
+
+**An overview.** "What are the key points?" looks like no particular passage, so search would return arbitrary chunks. The model calls `read_summary` instead, and gets the stored summary of the document:
+
+```
+read_summary
+  reason: "The user wants an overview of the document"
+result:  - Employee handbook for Acme
+         - Refunds take 5 to 7 business days ...
+```
+
+Then it writes the answer from that.
+
+**Small talk.** For "thanks" the model calls `no_lookup_needed`. The result tells it to reply briefly and not to answer from its own knowledge, so "what is the capital of France?" gets a polite "I can only help with this document".
+
+**A question that isn't answered.** "Does this person have pets?" The model searches "pets hobbies personal interests", gets passages that don't mention pets, and searches again with "hobbies". Still nothing, so it says "I couldn't find that information in the document." The system prompt makes it search twice before giving up.
+
+**A tool that fails.** Once the summary build hit a rate limit and `read_summary` threw an error. The error text went back to the model like any other result, and the model decided to call `search_document` instead. Nothing in the code says "if the summary fails, search". It's the loop doing its job.
+
+## Before the model is called
+
+- Chat is limited to 20 requests a minute per IP.
 - The session says what to search: one document or one collection.
-- The session must belong to the caller. A signed-in user's session needs that user. A guest's session needs the matching guest cookie. Otherwise the reply is "Session not found" (404), the same as for a session that does not exist.
-- The **last 10 messages** of the conversation are loaded **from the database**, not from the browser. This happens before the new question is saved, so the question is not in its own history.
-- The user's message is saved to `messages`.
+- The session has to belong to the caller. A signed-in user's session needs that user, a guest's needs the matching guest cookie. Anything else gets "Session not found" (404), the same reply as for a session that doesn't exist, so ids can't be probed.
+- The last 10 messages are read from the database, not from the browser, so a client can't forge them. This happens before the new question is saved.
+- The user's question is saved to `messages`.
 
-### 1. Route the message (small LLM)
+## The loop
 
-Not every message is a question about a passage, and search treats them all the same. So one small, fast LLM call (`openai/gpt-oss-20b`) first decides what the message is. It looks at the **last 4 messages**, each cut to **500 characters**, and returns an **intent** and a **search query**.
+The model is `openai/gpt-oss-120b` on Groq.
 
-| Intent | Meaning | Example | What happens |
-|---|---|---|---|
-| `question` | a specific question about the document | "what experience does he have?" | Search for passages, then answer from them (steps 2 to 5). |
-| `overview` | a request for a summary, key points, or what the whole document is about | "What are the key points?" | Read the document's summary instead of searching (see "Overview questions"). |
-| `chat` | small talk or an acknowledgement | "ok", "hi", "thanks!" | No search. A short friendly reply. |
+- If the model's reply contains a tool call, the tool runs, its result is added to the conversation, and the model is called again.
+- If the reply is plain text, that's the answer and the loop stops.
+- After 4 tool rounds, tools are switched off and the model has to answer. So one message costs at most 5 model calls.
+- An empty reply counts as "try again".
+- If a search finds only passages the model already has, the tool says "nothing new, answer from what you have". Otherwise the model keeps rewording the same search.
 
-For a `question`, the router also rewrites the message so it stands alone, because search works on meaning and "and the second one?" means nothing alone:
+Every tool takes a `reason` argument, listed first. The model writes its reason before the rest of the arguments, and the page shows it as the agent's thinking.
 
-```
-History:
-  User:      What experience does he have?
-  Assistant: ... Peace Nepal Dot Com (August 2025 - Present) ...
-New message: his latest employer?
+| Tool | Used for |
+|---|---|
+| `search_document` | a specific question or detail |
+| `read_summary` | an overview, or basic facts such as names and contact details |
+| `no_lookup_needed` | greetings, thanks, small talk, anything unrelated to the document |
 
-intent: question
-query:  What is the individual's latest employer?
-```
+Which tool a message gets is the model's choice, based on these descriptions and the system prompt. Our code has no rule for it.
 
-- The first message of a conversation has no history. It is still routed, so "hi" or "summarize this" work from the very start.
-- **If the router call fails,** the message is treated as a plain question with its original wording. A router problem never blocks an answer.
-- The rewrite is used **only for searching.** The answer LLM later gets the user's original wording.
+## What the browser gets, and what is saved
 
-### 2. Embed (questions only)
+The answer arrives over server-sent events:
 
-The rewritten query is turned into a vector by Gemini, marked `RETRIEVAL_QUERY`. It is the same kind of 768-number vector the chunks have (see [Ingestion](ingestion.md)).
+| Event | Sent | Contains |
+|---|---|---|
+| `step` | after each tool call | tool, reason, query, outcome (like "found 3 passages") |
+| `sources` | after each step | the passages found so far |
+| `token` | while the answer is written | a piece of text |
+| `done` or `error` | at the end | |
 
-### 3. Similarity search (questions only)
+If the model writes text before a tool call, that was thinking out loud and not the answer. The route and the page both throw it away when the `step` event arrives.
 
-The `match_chunks` function in Supabase compares the question vector with the chunk vectors and returns the closest ones, with a **cosine similarity** score from 0 to 1 (1 means the same meaning, near 0 means unrelated). The SQL is in [schema.sql](schema.sql), explained in [Database](database.md).
+The page shows the steps in a "reasoning" panel, open while the answer is pending and collapsible afterwards. When the stream ends, the answer is saved to `messages` together with its sources, its steps and the tokens used. If the stream breaks halfway, the part that arrived is still saved.
 
-- It only looks inside the current **document or collection**.
-- It returns the **top 3** chunks for a single document, or the **top 5** for a collection.
-- Then chunks scoring **below 0.5 are thrown away.**
+## Summaries
 
-Example scores for the question "How long do refunds take?" in one document:
+A summary is a short saved text about the whole document. It's what `read_summary` returns.
 
-```
-0.71  "Refunds take 5 to 7 business days to appear."     kept
-0.64  "To request a refund, email support..."             kept
-0.52  "Refunds are allowed within 30 days of purchase."   kept
-0.48  "Our office is open Monday to Friday."              dropped (top 3 was already full)
-```
+It's built in the background right after upload (`after()` in `lib/ingest.ts`), so the upload doesn't wait for it. It takes one call to `openai/gpt-oss-20b`, over up to 13 chunks spread evenly across the document, first and last included. A document of 13 chunks or fewer uses all of them. A longer one is summarized from excerpts. The summary is under 400 words and keeps names, dates, numbers and contact details.
 
-Three chunks go forward. A question about something not in the document might score `0.31, 0.28, 0.22`: all below 0.5, so nothing goes forward.
+Excerpts, because the Groq tier this project runs on allows only about 7,000 input tokens a minute. Summarizing a long document in passes didn't fit, and it failed outright on a 60,000 character one. The summary uses a different model from the chat so it doesn't eat the chat model's per-minute budget.
 
-### 4. Nothing found (questions only)
+If a document has no summary (uploaded before summaries existed, or the build failed), the first `read_summary` call builds and saves it. In a collection, the missing ones are built one at a time. For a collection, the summaries of all its documents are joined, each under its title.
 
-If no chunk reaches 0.5, there are two outcomes:
+## Things to watch
 
-- **The document has a summary.** The LLM is still called, with the summary alone (see step 5). Search misses some plain facts, and the summary usually has them. For example, "what's his name?" barely resembles a CV's header line, so no chunk scores 0.5, but the summary says "Resume of Prajwol Shrestha".
-- **No summary yet.** The LLM is **not called.** The reply is a fixed message, saved and streamed like a normal answer:
-
-> I couldn't find that information in the document.
-
-This saves a call and stops the model from making something up.
-
-### 5. Ask the LLM
-
-The answer model (`qwen/qwen3.8-27b`, on Groq) gets:
-
-1. **A system prompt.** For a question: answer strictly from the context, say "couldn't find" if it is not there, do not invent anything. For an overview: the same, plus "the user wants an overview". For chat: be brief and friendly, and do not state facts about the document.
-2. **The material.** For a question, the document summary (if one exists) plus the kept chunks, labelled `[Chunk 1]`, `[Chunk 2]`, and so on. For an overview, the summary. For chat, nothing. The prompt says to use the summary for basic facts (what the document is, who it is about, names) and the chunks for details.
-3. **The last 10 messages** of history.
-4. **The user's original message** (not the rewritten query).
-
-```
-system:  You answer only from this material.
-         Document summary: - Employee handbook for Acme ... refund policy ...
-         Passages:
-         [Chunk 1]: Refunds take 5 to 7 business days to appear.
-         [Chunk 2]: To request a refund, email support...
-history: (previous messages)
-user:    And what if I don't get one?
-```
-
-The original wording goes here because the LLM also sees the history and can read "it" and "that" itself. The rewrite exists only to help the search.
-
-### 6. Stream and save
-
-The answer arrives token by token over server-sent events:
-
-1. First a `sources` event with the chunks used, so the page can show them while the text is still typing. It is empty for overview and chat replies, and when an answer came from the summary alone, so no source box appears.
-2. Then `token` events, one per piece of text.
-3. Then `done`.
-
-When the stream ends, the answer is saved to `messages` with its source chunks and the tokens used. If the stream breaks halfway, the part that arrived is still saved. A partial answer is better than an empty turn.
-
-## Overview questions
-
-"What are the key points?" has a problem for search. It resembles no particular passage, so every chunk scores low and nothing would pass the 0.5 cutoff. Picking the closest few chunks would be arbitrary, and on a long document most of it would be missing.
-
-So an overview reads a **document summary** instead. It is built once and saved in `documents.summary`:
-
-- **When:** in the background right after upload (`after()` in `lib/ingest.ts`), so the upload does not wait for it.
-- **How:** the document's chunks are read in order and handed to `qwen/qwen3.8-27b`.
-  - A short document (up to about 24,000 characters) takes **one call**.
-  - A longer one is cut into sections of about 24,000 characters. Each section is summarized (3 at a time), and those summaries are then summarized together. This repeats until one summary is left.
-- **What it contains:** what kind of document it is, who or what it is about, the main points in order, and important names, dates, numbers and contact details (emails, phone numbers, addresses, links). Under 400 words.
-- **Collections:** the summaries of all documents in the collection are joined, each under its title.
-- **Questions use it too.** An ordinary question gets the summary next to its passages. A question never waits for a summary to be built: if there is none yet, it is simply left out.
-- **If a summary is missing** (a document uploaded before summaries existed, or a failed build), the first overview question builds it, saves it, and answers from it.
-- **If even that fails,** the router's `overview` falls back to the 8 closest chunks with no cutoff. It always gives an answer.
-
-Example, from a CV:
-
-```
-User:   What are the key points?
-Router: intent = overview
-Reads:  - Frontend-focused full-stack engineer, 3+ years
-        - Peace Nepal Dot Com (Aug 2025 - present), Frontend Developer
-        - Samsara Social (Dec 2022 - Aug 2023), Associate FullStack Developer
-        - React, React Native, Next.js, TypeScript, Node.js/NestJS, Python/Django
-Answer: streamed from that summary
-```
-
-## Things to know
-
-- **Small talk is answered, not searched.** "ok" no longer hits the "couldn't find" message.
-- **The 0.5 cutoff only applies to questions.** It is fixed, picked by hand. If answers are missing too often, or wrong chunks get through, it is the first number to tune (`SIMILARITY_THRESHOLD`).
-- **Search is weak on identity and contact facts.** A name, email or phone number sits in a header that looks nothing like the question. The summary is the safety net for these, which is why it keeps names and contact details. Summaries built before contact details were added lack them. To rebuild, run `update public.documents set summary = null;`; the next overview question for each document builds a new one.
-- **Top-k first, cutoff second.** A chunk ranked 4th is never considered, even if it scores above 0.5.
-- **The router can mislabel.** "What's the summary of the refund policy?" is a question about one topic, and could be mistaken for an overview. If a message is routed to the wrong path, the answer is weaker, not wrong: an overview of the whole document still contains the policy, and small talk never reaches the document.
-- **Every message costs one extra small call** (about 0.5 seconds) for the routing.
-- **Old "couldn't find" replies stay in history.** They are included like any other message.
-- **Max answer length is 2048 tokens**, at temperature 0.3.
+- The model can pick the wrong tool. About two dozen messages tried by hand all got sensible ones, but I haven't measured an error rate. The worst case is a real question sent to `no_lookup_needed`, which gets a friendly non-answer.
+- The 0.5 cutoff is fixed, picked by hand. If answers go missing too often, it's the first number to tune (`SIMILARITY_THRESHOLD` in `lib/agent-tools.ts`). The top 3 or 5 are picked first and the cutoff is applied after, so a chunk ranked 4th is never considered even if it scores above 0.5.
+- Search is weak on names and contact details, because they sit in a header that looks nothing like the question. The model is told to use `read_summary` for those, and the summary keeps them.
+- A summary of a long document can miss sections. The prompt tells the model to say so when the summary seems to cover only part.
+- It costs at least 2 calls of a large model per message. On this Groq tier that's roughly 3 messages a minute. Going over means the reply waits, and can fail.
+- Answers saved before the `steps` column existed have no steps.
+- Answers are capped at 2048 tokens, at temperature 0.3.

@@ -42,14 +42,15 @@ chunks      40 rows: (document_id=d1, chunk_index=0..39, content="...", embeddin
 chat_sessions  id=s1  document_id=d1  collection_id=NULL  user_id=u1
 messages    (session_id=s1, role="user",      content="How long do refunds take?")
             (session_id=s1, role="assistant", content="5 to 7 business days.",
-             source_chunks=[{id, content, similarity}, ...], tokens_used=412)
+             source_chunks=[{id, content, similarity}, ...],
+             steps=[{tool: "search_document", query, reason, outcome}], tokens_used=412)
 ```
 
 If the user had uploaded three files, there would be three `documents`, their chunks, one `collections` row, three `collection_documents` rows, and one `chat_sessions` row with `collection_id` set and `document_id` empty.
 
 ## The search function: `match_chunks`
 
-Called from `app/api/chat/route.ts` with a question vector. It returns the closest chunks.
+Called by the `search_document` tool (`lib/agent-tools.ts`) with a question vector. It returns the closest chunks.
 
 ```sql
 match_chunks(query_embedding, match_document_id, match_collection_id, match_count)
@@ -57,7 +58,7 @@ match_chunks(query_embedding, match_document_id, match_collection_id, match_coun
 
 - **Which chunks to search:** if `match_collection_id` is given, all chunks of every document in that collection. Otherwise, only chunks of `match_document_id`.
 - **How closeness is measured:** `<=>` is cosine **distance** (0 = identical meaning). The function returns `similarity = 1 - distance`, so 1 is the same meaning and values near 0 are unrelated.
-- **How many:** the closest `match_count` chunks, best first. The route asks for 3 for a document and 5 for a collection, then drops anything under 0.5 (see [Retrieval and answering](retrieval-and-answering.md)).
+- **How many:** the closest `match_count` chunks, best first. The tool asks for 3 for a document and 5 for a collection, then drops anything under 0.5 (see [Retrieval and answering](retrieval-and-answering.md)).
 
 Example, with the question "How long do refunds take?" in `handbook.pdf`:
 
@@ -105,11 +106,10 @@ Bucket `documents` holds the original uploads. It is **private**, and allows onl
 
 ## Things to know
 
-- **No vector index, by design.** Khoj used to have an `ivfflat` index (`lists = 100`). It was dropped after a test of 18 questions showed it hurting. The index looks only inside the nearest list or two, and the "this document only" filter is applied afterwards. With a few hundred chunks that is about 3 candidates for the whole table, so most searches returned nothing from the right document: hit@3 was 22% with the index and 100% without. Exact search is fast enough up to tens of thousands of chunks. Past that, add an `hnsw` index with iterative scans on, and test again with a set of questions to check it loses nothing.
-- **Missing indexes.** Only primary keys exist. There is no index on `chunks.document_id`, `messages.session_id`, `chat_sessions.document_id` or `collection_id`, or the `user_id` columns. Fine for now, slow later, including for cascading deletes.
-- **Two versions of `match_chunks`.** The live database still has an older 3-argument version, `(query_embedding, match_document_id, match_count)`, which the app does not use. Only the 4-argument version is in `schema.sql`. To remove the old one:
+- No vector index, by design. Khoj used to have an `ivfflat` index (`lists = 100`). It was dropped after a test of 18 questions showed it hurting. The index looks only inside the nearest list or two, and the "this document only" filter is applied afterwards. With a few hundred chunks that is about 3 candidates for the whole table, so most searches returned nothing from the right document: hit@3 was 22% with the index and 100% without. Exact search is fast enough up to tens of thousands of chunks. Past that, add an `hnsw` index with iterative scans on, and test again with a set of questions to check it loses nothing.
+- Missing indexes. Only primary keys exist. There is no index on `chunks.document_id`, `messages.session_id`, `chat_sessions.document_id` or `collection_id`, or the `user_id` columns. Fine for now, slow later, including for cascading deletes.
+- Two versions of `match_chunks`. The live database still has an older 3-argument version, `(query_embedding, match_document_id, match_count)`, which the app does not use. Only the 4-argument version is in `schema.sql`. To remove the old one:
   ```sql
   drop function public.match_chunks(vector, uuid, integer);
   ```
-- **A session should point at exactly one thing.** Nothing in the database stops a `chat_sessions` row from having both `document_id` and `collection_id`, or neither. The upload route sets exactly one.
-- **Summaries cover at most the first 1000 chunks.** `lib/summary.ts` reads a document's chunks in one query, and Supabase returns at most 1000 rows by default. Past that (about 750,000 characters), the summary leaves out the end of the document.
+- A session should point at exactly one thing. Nothing in the database stops a `chat_sessions` row from having both `document_id` and `collection_id`, or neither. The upload route sets exactly one.
