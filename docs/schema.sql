@@ -6,6 +6,8 @@
 --
 -- Applying this to a database created before summaries existed? Run only:
 --   alter table public.documents add column if not exists summary text;
+-- Before the agent's steps were saved? Run only:
+--   alter table public.messages add column if not exists steps jsonb;
 
 create extension if not exists vector;
 create extension if not exists "uuid-ossp";
@@ -79,6 +81,7 @@ create table public.messages (
   role          text not null check (role in ('user', 'assistant')),
   content       text not null,
   source_chunks jsonb,
+  steps         jsonb,  -- the agent's tool calls for this answer: tool, reason, query, outcome
   tokens_used   integer,
   created_at    timestamptz default now()
 );

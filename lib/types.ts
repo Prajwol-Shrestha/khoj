@@ -52,6 +52,7 @@ export interface MessageRow {
   role: Role;
   content: string;
   source_chunks: SourceChunkData[] | null;
+  steps: AgentStep[] | null;
   tokens_used: number | null;
   created_at?: string | null;
 }

@@ -129,7 +129,10 @@ export async function runAgent(opts: {
     const pass = await streamPass(messages, opts.tools, toolChoice, opts.onToken);
     tokensUsed += pass.tokensUsed;
 
-    if (pass.calls.length === 0) return { answer: pass.content, tokensUsed };
+    if (pass.calls.length === 0) {
+      if (pass.content.trim()) return { answer: pass.content, tokensUsed };
+      continue; // empty reply, ask again
+    }
 
     messages.push({ role: "assistant", content: pass.content, tool_calls: pass.calls });
 

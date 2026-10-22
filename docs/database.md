@@ -27,7 +27,7 @@ erDiagram
 | `collections` | a group of 2 to 3 documents | `title`, `pinned`, owner |
 | `collection_documents` | a link between a collection and a document | `collection_id`, `document_id` |
 | `chat_sessions` | a conversation | `document_id` **or** `collection_id`, `title`, owner |
-| `messages` | one chat message | `session_id`, `role`, `content`, `source_chunks`, `tokens_used` |
+| `messages` | one chat message | `session_id`, `role`, `content`, `source_chunks`, `steps`, `tokens_used` |
 
 **Owner** means one of two columns. `user_id` is set for signed-in users. `session_token` is set for guests, and it is a random id kept in the browser. Exactly one is filled in.
 

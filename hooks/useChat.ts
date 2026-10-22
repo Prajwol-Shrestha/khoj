@@ -36,6 +36,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
       row.role === "assistant" && row.source_chunks
         ? row.source_chunks
         : undefined,
+    steps: row.role === "assistant" && row.steps ? row.steps : undefined,
     tokensUsed: row.tokens_used ?? undefined,
   };
 }

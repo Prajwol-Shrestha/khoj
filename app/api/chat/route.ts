@@ -5,7 +5,7 @@ import { GUEST_TOKEN_KEY } from "@/lib/guest";
 import { rateLimit } from "@/lib/rate-limit";
 import { encodeEvent } from "@/lib/sse";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Role, SourceChunkData } from "@/lib/types";
+import type { AgentStep, Role, SourceChunkData } from "@/lib/types";
 import { NextRequest } from "next/server";
 
 const MAX_HISTORY_MESSAGES = 10;
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         let answer = "";
         let tokensUsed = 0;
+        const steps: AgentStep[] = [];
 
         try {
           const result = await runAgent({
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
             onStep: (step) => {
               // text before a tool call was the model thinking aloud, not the answer
               answer = "";
+              steps.push(step);
               controller.enqueue(encodeEvent({ type: "step", step }));
               controller.enqueue(encodeEvent({ type: "sources", sources: sources() }));
             },
@@ -138,6 +140,7 @@ export async function POST(req: NextRequest) {
               role: "assistant",
               content: answer,
               source_chunks: sources(),
+              steps: steps.length ? steps : null,
               tokens_used: tokensUsed,
             });
           } catch (error) {
