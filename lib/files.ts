@@ -1,4 +1,3 @@
-// Browser-safe file rules. Extraction lives in extractor.ts (pdf-parse, server only).
 
 export const SUPPORTED_MIME_TYPES = [
   "application/pdf",
@@ -29,7 +28,6 @@ export function titleFromFileName(fileName: string): string {
   return fileName.replace(/\.(pdf|txt|md|docx)$/i, "");
 }
 
-// Returns a user-facing message, or null when the file is fine.
 export function checkFile(file: File): string | null {
   if (!isSupportedType(file.type)) {
     return `${file.name}: unsupported type. Supported formats: ${SUPPORTED_EXTENSIONS.join(", ")}`;

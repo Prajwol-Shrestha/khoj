@@ -8,7 +8,7 @@ Built with Next.js, Supabase (Postgres, Storage, Google sign-in), Gemini embeddi
 
 ## How it works
 
-Khoj is a RAG with a router. Documents are cut into chunks and each chunk becomes a vector. A small model first sorts every message: a question is rewritten using the chat history and answered from the closest chunks plus a stored summary of the document, an overview request ("what are the key points?") reads that summary, and small talk needs neither.
+Khoj is a RAG with an agent. Documents are cut into chunks and each chunk becomes a vector. For every message, a model decides what to do: search the chunks, read a stored summary of the document, or just reply to small talk. If the first result isn't enough it can try again, and the steps it took are shown next to the answer.
 
 ![Khoj RAG overview](docs/images/overview.webp)
 

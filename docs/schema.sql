@@ -6,6 +6,8 @@
 --
 -- Applying this to a database created before summaries existed? Run only:
 --   alter table public.documents add column if not exists summary text;
+-- Before the agent's steps were saved? Run only:
+--   alter table public.messages add column if not exists steps jsonb;
 
 create extension if not exists vector;
 create extension if not exists "uuid-ossp";
@@ -79,6 +81,7 @@ create table public.messages (
   role          text not null check (role in ('user', 'assistant')),
   content       text not null,
   source_chunks jsonb,
+  steps         jsonb,  -- the agent's tool calls for this answer: tool, reason, query, outcome
   tokens_used   integer,
   created_at    timestamptz default now()
 );
@@ -151,7 +154,7 @@ create policy "collection_documents access" on public.collection_documents
   );
 
 -- Search: the closest chunks to a question, inside one document or one collection.
--- similarity = 1 - cosine distance (1 = same meaning). Called from app/api/chat/route.ts.
+-- similarity = 1 - cosine distance (1 = same meaning). Called by the search_document tool (lib/agent-tools.ts).
 create or replace function public.match_chunks(
   query_embedding     vector,
   match_document_id   uuid default null,

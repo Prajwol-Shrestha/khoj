@@ -36,6 +36,7 @@ function rowToMessage(row: MessageRow): ChatMessage {
       row.role === "assistant" && row.source_chunks
         ? row.source_chunks
         : undefined,
+    steps: row.role === "assistant" && row.steps ? row.steps : undefined,
     tokensUsed: row.tokens_used ?? undefined,
   };
 }
@@ -87,7 +88,6 @@ export function useChat(id: string, initialSessionId?: string) {
         if (docRes.data) {
           if (!cancelled) setDoc(docRes.data as DocMeta);
         } else {
-          // no document with this id means it addresses a collection
           const colRes = await supabase
             .from("collections")
             .select("title")
@@ -187,6 +187,14 @@ export function useChat(id: string, initialSessionId?: string) {
         for await (const event of readEvents(res.body)) {
           if (event.type === "sources") {
             patchPending((msg) => ({ ...msg, sources: event.sources }));
+          } else if (event.type === "step") {
+            // text streamed so far was the agent thinking aloud, not the answer
+            patchPending((msg) => ({
+              ...msg,
+              content: "",
+              pending: true,
+              steps: [...(msg.steps ?? []), event.step],
+            }));
           } else if (event.type === "token") {
             patchPending((msg) => ({
               ...msg,

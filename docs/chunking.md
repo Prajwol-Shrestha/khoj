@@ -96,8 +96,8 @@ chunk 2:                    [S4] [S5] [S6] [S7] [S8] [P3]
 
 ## Things to know
 
-- **Sentences are not one chunk each.** Sentences are only pieces. They are packed together, roughly 6 to 8 per chunk.
-- **Short paragraphs share chunks.** A chunk does not care about paragraph edges.
-- **Old documents keep their old chunks.** Changing the chunker affects new uploads only. Re-upload a document to re-chunk it.
-- **Changing the numbers.** `CHUNK_SIZE` and `OVERLAP` are at the top of `lib/chunker.ts`. After a change, the similarity cutoff (0.5, in `app/api/chat/route.ts`) may need retuning, because bigger chunks shift similarity scores.
-- **No page numbers yet.** Chunks do not record which PDF page they came from.
+- Sentences are not one chunk each. Sentences are only pieces. They are packed together, roughly 6 to 8 per chunk.
+- Short paragraphs share chunks. A chunk does not care about paragraph edges.
+- Old documents keep their old chunks. Changing the chunker affects new uploads only. Re-upload a document to re-chunk it.
+- Changing the numbers. `CHUNK_SIZE` and `OVERLAP` are at the top of `lib/chunker.ts`. After a change, the similarity cutoff (0.5, in `lib/agent-tools.ts`) may need retuning, because bigger chunks shift similarity scores.
+- No page numbers yet. Chunks do not record which PDF page they came from.

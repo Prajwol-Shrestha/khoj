@@ -25,7 +25,7 @@ export interface CollectionRow {
   pinned: boolean;
 }
 
-// A session points at exactly one of the two: a single document, or a collection.
+// a session points at a document or a collection, never both
 export interface ChatSessionRow {
   id: string;
   document_id: string | null;
@@ -39,12 +39,20 @@ export interface SourceChunkData {
   document_id: string | null;
 }
 
+export interface AgentStep {
+  tool: string;
+  reason?: string;
+  query?: string;
+  outcome: string;
+}
+
 export interface MessageRow {
   id: string;
   session_id: string;
   role: Role;
   content: string;
   source_chunks: SourceChunkData[] | null;
+  steps: AgentStep[] | null;
   tokens_used: number | null;
   created_at?: string | null;
 }
@@ -54,13 +62,12 @@ export interface ChatMessage {
   role: Role;
   content: string;
   sources?: SourceChunkData[];
+  steps?: AgentStep[];
   tokensUsed?: number;
   pending?: boolean;
   error?: boolean;
 }
 
-// One file uploads as a document; several upload as a collection of them.
-// Either way `id` is what /chat/[id] takes.
 export interface UploadResult {
   id: string;
   sessionId: string;

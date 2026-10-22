@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { generateSummary } from "@/lib/summary";
 import { after } from "next/server";
 
-// Guests own their rows through a browser-local token; signed-in users through user_id.
+// guests own rows through a token kept in the browser, signed-in users through user_id
 export interface Owner {
   userId: string | null;
   sessionToken: string | null;
@@ -26,7 +26,6 @@ export interface IngestedDocument {
   chunkCount: number;
 }
 
-// store → create row → extract → chunk → embed → save chunks → mark ready
 export async function ingestFile(
   file: File,
   owner: Owner,
@@ -71,7 +70,7 @@ export async function ingestFile(
     extractPromise,
   ]);
 
-  // no row, nothing to mark as failed
+  // no row yet, so nothing to mark as failed
   if (insert.status === "rejected") throw insert.reason;
   if (insert.value.error) {
     throw new Error(`${file.name}: ${insert.value.error.message}`);
@@ -82,7 +81,7 @@ export async function ingestFile(
   try {
     if (upload.status === "rejected") throw upload.reason;
     if (upload.value.error) {
-      throw new Error(`${file.name}: storage error — ${upload.value.error.message}`);
+      throw new Error(`${file.name}: storage error: ${upload.value.error.message}`);
     }
     if (extract.status === "rejected") throw extract.reason;
 
@@ -113,8 +112,8 @@ export async function ingestFile(
       })
       .eq("id", document.id);
 
-    // built once the response has gone out, so the upload doesn't wait on it. If it
-    // fails, the first overview question builds it instead (lib/summary.ts)
+    // runs after the response goes out so the upload doesn't wait for it. if it
+    // fails, the first overview question builds it instead
     after(() =>
       generateSummary(document.id).catch((error) =>
         console.error(`Summary failed for ${file.name}:`, error),
@@ -123,7 +122,7 @@ export async function ingestFile(
 
     return { id: document.id, title, pageCount, chunkCount: chunks.length };
   } catch (error) {
-    // without this the row would sit on "processing" forever
+    // otherwise the row stays on "processing" forever
     await supabase
       .from("documents")
       .update({ status: "error" })

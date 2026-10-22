@@ -5,13 +5,10 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const MODEL = "gemini-embedding-001";
 const DIMENSIONS = 768;
 
-// embedContent takes an array and returns embeddings in the same order, so
-// chunks go up in batches rather than one request each.
 const BATCH_SIZE = 50;
 const BATCH_DELAY_MS = 200;
 
-// Documents and queries use different task types — Gemini tunes the vector for
-// each side of the search, so these must not be swapped.
+// documents and queries get different task types, don't swap them
 type TaskType = "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY";
 
 async function embed(

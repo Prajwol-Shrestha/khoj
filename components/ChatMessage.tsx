@@ -1,6 +1,8 @@
 "use client";
 
+import AgentSteps from "@/components/AgentSteps";
 import { AlertIcon, ChevronDownIcon, ScanIcon } from "@/components/Icons";
+import Markdown from "@/components/Markdown";
 import SourceChunk from "@/components/SourceChunk";
 import type { ChatMessage as ChatMessageType } from "@/lib/types";
 import { useState } from "react";
@@ -23,6 +25,7 @@ export default function ChatMessage({ message }: ChatMessageProps) {
   }
 
   const sources = message.sources ?? [];
+  const steps = message.steps ?? [];
 
   return (
     <div className="flex animate-fade-up gap-3">
@@ -31,6 +34,10 @@ export default function ChatMessage({ message }: ChatMessageProps) {
       </span>
 
       <div className="min-w-0 flex-1 space-y-3">
+        {steps.length > 0 && (
+          <AgentSteps steps={steps} live={!!message.pending} />
+        )}
+
         {message.pending ? (
           <div className="flex items-center gap-2.5 py-1.5 text-sm text-muted">
             <span className="scan-dots flex items-center" aria-hidden>
@@ -41,9 +48,7 @@ export default function ChatMessage({ message }: ChatMessageProps) {
             <span>Retrieving passages and composing an answer…</span>
           </div>
         ) : (
-          <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
-            {message.content}
-          </div>
+          <Markdown>{message.content}</Markdown>
         )}
 
         {message.error && (

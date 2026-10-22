@@ -1,7 +1,8 @@
-import type { SourceChunkData } from "@/lib/types";
+import type { AgentStep, SourceChunkData } from "@/lib/types";
 
 export type ChatStreamEvent =
   | { type: "sources"; sources: SourceChunkData[] }
+  | { type: "step"; step: AgentStep }
   | { type: "token"; content: string }
   | { type: "error"; message: string }
   | { type: "done" };
@@ -12,7 +13,6 @@ export function encodeEvent(event: ChatStreamEvent): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-// Yields events as they arrive, holding back any partial trailing frame.
 export async function* readEvents(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<ChatStreamEvent> {
@@ -20,8 +20,7 @@ export async function* readEvents(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  // finally, not just the happy path — a consumer that breaks on "done" or
-  // throws would otherwise leave the reader locked and the socket open
+  // finally, so a consumer that breaks early or throws doesn't leave the socket open
   try {
     while (true) {
       const { done, value } = await reader.read();

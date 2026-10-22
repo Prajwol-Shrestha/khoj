@@ -3,25 +3,23 @@ import Groq from "groq-sdk";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
-const SUMMARY_MODEL = "qwen/qwen3.8-27b";
+const SUMMARY_MODEL = "openai/gpt-oss-20b";
 
-// One call reads about this much text. A longer document is summarized in
-// sections, then those summaries are summarized, until one is left.
-const SECTION_CHARS = 24_000;
-const PARALLEL_CALLS = 3; // stays under the provider's rate limit
-const MAX_PASSES = 6;
+// groq's free tier allows about 7k input tokens a minute, so a summary is one call
+// over chunks spread evenly across the document, not over the whole text
+const MAX_CHUNKS = 13;
 
 const SUMMARY_PROMPT = `You write a reference summary of a document, so that questions like "what is this about?" and "what are the key points?" can be answered from the summary alone.
 Cover: what kind of document it is and who or what it is about; the main points, in the order they appear; important names, dates, numbers, contact details (emails, phone numbers, addresses, links) and terms.
 Use short plain-text bullet points, under 400 words. Use only what the text says. Do not add opinions or anything that is not in the text.
-The text may be the document itself, or summaries of consecutive parts of it. Either way, write one summary of the whole.`;
+The text may be excerpts spread across a long document, in order. Write one summary of the whole document.`;
 
 async function ask(text: string): Promise<string> {
   const res = await groq.chat.completions.create({
     model: SUMMARY_MODEL,
     temperature: 0.2,
-    max_completion_tokens: 4096, // reasoning tokens count against this
-    reasoning_effort: "default",
+    max_completion_tokens: 4096, // reasoning tokens count too
+    reasoning_effort: "low",
     messages: [
       { role: "system", content: SUMMARY_PROMPT },
       { role: "user", content: text },
@@ -33,59 +31,33 @@ async function ask(text: string): Promise<string> {
   return summary;
 }
 
-// Joins consecutive parts into groups that each fit one call.
-function group(parts: string[], max: number): string[] {
-  const groups: string[] = [];
-  let current = "";
-
-  for (const part of parts) {
-    if (current && current.length + part.length > max) {
-      groups.push(current);
-      current = "";
-    }
-    current += (current ? "\n\n" : "") + part;
-  }
-  if (current) groups.push(current);
-
-  return groups;
-}
-
-async function inBatches<T, R>(
-  items: T[],
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += PARALLEL_CALLS) {
-    results.push(...(await Promise.all(items.slice(i, i + PARALLEL_CALLS).map(fn))));
-  }
-  return results;
-}
-
-// `parts` are the document's text, in order. A short document takes one call;
-// a long one folds down in passes until a single summary is left.
-export async function summarize(parts: string[]): Promise<string> {
-  if (parts.length === 0) throw new Error("Nothing to summarize");
-
-  let texts = parts;
-  for (let pass = 0; pass < MAX_PASSES; pass++) {
-    texts = await inBatches(group(texts, SECTION_CHARS), ask);
-    if (texts.length === 1) return texts[0];
-  }
-  throw new Error("The summary did not converge");
-}
-
-// Builds the summary from the stored chunks and saves it on the document.
 export async function generateSummary(documentId: string): Promise<string> {
   const supabase = createAdminClient();
+
+  const { data: doc, error: docError } = await supabase
+    .from("documents")
+    .select("chunk_count")
+    .eq("id", documentId)
+    .single();
+  if (docError) throw new Error(`Document error: ${docError.message}`);
+
+  // evenly spaced chunk indexes, first and last included
+  const total = doc.chunk_count ?? 0;
+  const count = Math.min(total, MAX_CHUNKS);
+  const indexes = Array.from({ length: count }, (_, i) =>
+    count === 1 ? 0 : Math.round((i * (total - 1)) / (count - 1)),
+  );
 
   const { data: chunks, error } = await supabase
     .from("chunks")
     .select("content")
     .eq("document_id", documentId)
+    .in("chunk_index", indexes)
     .order("chunk_index");
   if (error) throw new Error(`Chunk error: ${error.message}`);
+  if (!chunks?.length) throw new Error("Nothing to summarize");
 
-  const summary = await summarize((chunks ?? []).map((c) => c.content));
+  const summary = await ask(chunks.map((c) => c.content).join("\n\n"));
 
   const { error: saveError } = await supabase
     .from("documents")
@@ -96,9 +68,8 @@ export async function generateSummary(documentId: string): Promise<string> {
   return summary;
 }
 
-type SessionScope = { document_id: string | null; collection_id: string | null };
+export type SessionScope = { document_id: string | null; collection_id: string | null };
 
-// The session's document, or every document in its collection.
 async function loadDocs(session: SessionScope) {
   const supabase = createAdminClient();
 
@@ -122,7 +93,6 @@ async function loadDocs(session: SessionScope) {
   return docs;
 }
 
-// A collection's summaries are joined under their titles.
 function join(
   items: { title: string; summary: string }[],
   titled: boolean,
@@ -132,28 +102,19 @@ function join(
     .join("\n\n");
 }
 
-// What an overview question reads: the saved summary of the session's document,
-// or of every document in its collection. A missing one is built now and saved,
-// which covers documents uploaded before summaries existed and failed builds.
+// what an overview question reads. a missing summary is built and saved here,
+// which covers old uploads and failed builds
 export async function getOverview(session: SessionScope): Promise<string> {
   const docs = await loadDocs(session);
 
-  const items = await Promise.all(
-    docs.map(async (doc) => ({
+  // one at a time, the token limit is per minute across all calls
+  const items = [];
+  for (const doc of docs) {
+    items.push({
       title: doc.title,
       summary: doc.summary ?? (await generateSummary(doc.id)),
-    })),
-  );
+    });
+  }
 
   return join(items, !!session.collection_id);
-}
-
-// What an ordinary question gets alongside its passages: whatever summaries exist
-// already. Never builds one, so a question never waits on a model call. Search
-// can miss basic facts ("what's his name?") that a summary states plainly.
-export async function getSummaryIfReady(
-  session: SessionScope,
-): Promise<string | null> {
-  const docs = (await loadDocs(session)).filter((doc) => doc.summary);
-  return docs.length ? join(docs, !!session.collection_id) : null;
 }

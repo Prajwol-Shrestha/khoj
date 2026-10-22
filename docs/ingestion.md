@@ -81,7 +81,7 @@ The `error` state exists so a failed file does not sit on "processing" forever. 
 
 ### 5. Summary, in the background
 
-Once the chunks are saved, a short **summary of the whole document** is built and saved in `documents.summary`. Overview questions such as "what are the key points?" read it, because search cannot answer them (see [Retrieval and answering](retrieval-and-answering.md)).
+Once the chunks are saved, a short **summary of the whole document** is built and saved in `documents.summary`. Overview questions such as "what are the key points?" read it, because search cannot answer them (see [Retrieval and answering](retrieval-and-answering.md)). It is built from up to 13 chunks spread evenly across the document, in one call, because of Groq's per-minute token limits.
 
 It runs after the response has gone out (`after()` in `lib/ingest.ts`), so the upload does not wait for it. The document is `ready` and chattable straight away. If the summary fails or is not done yet, the first overview question builds it.
 
@@ -117,8 +117,8 @@ If the user had uploaded `handbook.pdf` + `policy.pdf` + `faq.docx`, the same ha
 
 ## Things to know
 
-- **A crash can still leave the row on "processing".** If the server is killed mid-upload (for example by a time limit), nothing gets to mark the row as `error`.
-- **Slow for big files.** Everything happens inside one request. A very large PDF can hit server time limits.
-- **Chunks do not know their page.** Only the total page count is saved.
-- **Same file twice = stored twice.** There is no duplicate check.
-- **Old documents keep old chunks.** Changing the chunker only affects new uploads.
+- A crash can still leave the row on "processing". If the server is killed mid-upload (for example by a time limit), nothing gets to mark the row as `error`.
+- Slow for big files. Everything happens inside one request. A very large PDF can hit server time limits.
+- Chunks do not know their page. Only the total page count is saved.
+- Same file twice = stored twice. There is no duplicate check.
+- Old documents keep old chunks. Changing the chunker only affects new uploads.
