@@ -17,7 +17,6 @@ export function useLibrary<T extends LibraryItem>(
 
   const noun = table === "documents" ? "document" : "collection";
 
-  // stable sort keeps the server's created_at order inside each group
   const items = [...rows].sort((a, b) => {
     if (a.pinned === b.pinned) return 0;
     return a.pinned ? -1 : 1;

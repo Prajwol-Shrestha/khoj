@@ -16,7 +16,7 @@ const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://khoj.shresthaprajwol.com.np";
 const TITLE = "khoj — document retrieval engine";
 const DESCRIPTION =
-  "Upload a PDF and ask questions in plain language. khoj retrieves the most relevant passages and answers strictly from them — every response cites the exact chunks it used.";
+  "Upload a PDF and ask questions in plain language. khoj retrieves the most relevant passages and answers strictly from them. Every response cites the exact chunks it used.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

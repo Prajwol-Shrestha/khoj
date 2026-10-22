@@ -9,7 +9,6 @@ interface SiteHeaderProps {
     email?: string | null;
     avatarUrl?: string | null;
   } | null;
-  // the dashboard is already the dashboard, so it hides its own link
   showDashboardLink?: boolean;
 }
 

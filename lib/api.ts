@@ -14,7 +14,7 @@ export function serverError(context: string, error: unknown) {
   );
 }
 
-// Null for guests. The auth client reads cookies; the admin client does the work.
+// null for guests
 export async function getUser() {
   const authClient = await createClient();
   const {
@@ -27,9 +27,8 @@ export type OwnedTable = "documents" | "collections";
 
 const EDITABLE_FIELDS = ["title", "pinned"] as const;
 
-// Rename / pin. Documents and collections behave identically here.
-// Ownership is enforced by the user_id match — someone else's row updates
-// zero rows and 404s.
+// rename / pin, same for documents and collections. someone else's row matches
+// nothing on user_id, so it 404s
 export async function updateOwnedRow(
   table: OwnedTable,
   id: string,

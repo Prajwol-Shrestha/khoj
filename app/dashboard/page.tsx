@@ -55,7 +55,6 @@ export default async function DashboardPage() {
       (collectionDocCounts[cd.collection_id] ?? 0) + 1;
   });
 
-  // keyed by document id or collection id — a session points at exactly one
   const sessionMap: Record<string, string> = {};
   (sessions ?? []).forEach((s) => {
     if (s.document_id) sessionMap[s.document_id] = s.id;

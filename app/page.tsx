@@ -105,7 +105,7 @@ export default function Home() {
             </h1>
             <p className="mt-4 max-w-md text-lg leading-relaxed text-muted">
               Upload a PDF and ask questions in plain language. khoj retrieves
-              the most relevant passages and answers from them — every response
+              the most relevant passages and answers from them. Every response
               cites the exact chunks it used.
             </p>
           </div>

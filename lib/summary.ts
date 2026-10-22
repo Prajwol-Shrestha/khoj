@@ -5,10 +5,9 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
 const SUMMARY_MODEL = "qwen/qwen3.8-27b";
 
-// One call reads about this much text. A longer document is summarized in
-// sections, then those summaries are summarized, until one is left.
+// longer documents are summarized in sections, then the summaries get summarized
 const SECTION_CHARS = 24_000;
-const PARALLEL_CALLS = 3; // stays under the provider's rate limit
+const PARALLEL_CALLS = 3; // keeps us under groq's rate limit
 const MAX_PASSES = 6;
 
 const SUMMARY_PROMPT = `You write a reference summary of a document, so that questions like "what is this about?" and "what are the key points?" can be answered from the summary alone.
@@ -20,7 +19,7 @@ async function ask(text: string): Promise<string> {
   const res = await groq.chat.completions.create({
     model: SUMMARY_MODEL,
     temperature: 0.2,
-    max_completion_tokens: 4096, // reasoning tokens count against this
+    max_completion_tokens: 4096, // reasoning tokens count too
     reasoning_effort: "default",
     messages: [
       { role: "system", content: SUMMARY_PROMPT },
@@ -33,7 +32,6 @@ async function ask(text: string): Promise<string> {
   return summary;
 }
 
-// Joins consecutive parts into groups that each fit one call.
 function group(parts: string[], max: number): string[] {
   const groups: string[] = [];
   let current = "";
@@ -61,8 +59,6 @@ async function inBatches<T, R>(
   return results;
 }
 
-// `parts` are the document's text, in order. A short document takes one call;
-// a long one folds down in passes until a single summary is left.
 export async function summarize(parts: string[]): Promise<string> {
   if (parts.length === 0) throw new Error("Nothing to summarize");
 
@@ -74,7 +70,6 @@ export async function summarize(parts: string[]): Promise<string> {
   throw new Error("The summary did not converge");
 }
 
-// Builds the summary from the stored chunks and saves it on the document.
 export async function generateSummary(documentId: string): Promise<string> {
   const supabase = createAdminClient();
 
@@ -96,9 +91,8 @@ export async function generateSummary(documentId: string): Promise<string> {
   return summary;
 }
 
-type SessionScope = { document_id: string | null; collection_id: string | null };
+export type SessionScope = { document_id: string | null; collection_id: string | null };
 
-// The session's document, or every document in its collection.
 async function loadDocs(session: SessionScope) {
   const supabase = createAdminClient();
 
@@ -122,7 +116,6 @@ async function loadDocs(session: SessionScope) {
   return docs;
 }
 
-// A collection's summaries are joined under their titles.
 function join(
   items: { title: string; summary: string }[],
   titled: boolean,
@@ -132,9 +125,8 @@ function join(
     .join("\n\n");
 }
 
-// What an overview question reads: the saved summary of the session's document,
-// or of every document in its collection. A missing one is built now and saved,
-// which covers documents uploaded before summaries existed and failed builds.
+// what an overview question reads. a missing summary is built and saved here,
+// which covers old uploads and failed builds
 export async function getOverview(session: SessionScope): Promise<string> {
   const docs = await loadDocs(session);
 
@@ -146,14 +138,4 @@ export async function getOverview(session: SessionScope): Promise<string> {
   );
 
   return join(items, !!session.collection_id);
-}
-
-// What an ordinary question gets alongside its passages: whatever summaries exist
-// already. Never builds one, so a question never waits on a model call. Search
-// can miss basic facts ("what's his name?") that a summary states plainly.
-export async function getSummaryIfReady(
-  session: SessionScope,
-): Promise<string | null> {
-  const docs = (await loadDocs(session)).filter((doc) => doc.summary);
-  return docs.length ? join(docs, !!session.collection_id) : null;
 }
