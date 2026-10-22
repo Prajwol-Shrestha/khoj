@@ -4,7 +4,7 @@ import type { CompletionUsage } from "groq-sdk/resources/completions";
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
-const MODEL = "qwen/qwen3.8-27b";
+const MODEL = "openai/gpt-oss-120b";
 const MAX_STEPS = 4;
 
 type Message = Groq.Chat.ChatCompletionMessageParam;
@@ -64,7 +64,7 @@ async function streamPass(
     max_completion_tokens: 2048,
     temperature: 0.3,
     stream: true,
-    reasoning_effort: "default",
+    reasoning_effort: "low",
   });
 
   let content = "";
@@ -117,7 +117,16 @@ export async function runAgent(opts: {
     const toolChoice =
       round > MAX_STEPS ? "none" : round === 1 ? "required" : "auto";
 
-    const pass = await streamPass(messages, opts.tools, toolChoice, opts.onToken);
+    let pass;
+    try {
+      pass = await streamPass(messages, opts.tools, toolChoice, opts.onToken);
+    } catch (error) {
+      // gpt-oss sometimes refuses a forced tool call (small talk), let it answer
+      if (toolChoice !== "required" || !String(error).includes("Tool choice is required")) {
+        throw error;
+      }
+      pass = await streamPass(messages, opts.tools, "auto", opts.onToken);
+    }
     tokensUsed += pass.tokensUsed;
 
     if (pass.calls.length === 0) return { answer: pass.content, tokensUsed };
@@ -143,7 +152,7 @@ export async function runAgent(opts: {
       } catch (error) {
         console.error(`Tool ${call.name} failed:`, error);
         const message = error instanceof Error ? error.message : String(error);
-        result = { content: `Error: ${message}`, outcome: `failed: ${message}` };
+        result = { content: `Error: ${message}`, outcome: `failed: ${message.slice(0, 120)}` };
       }
 
       messages.push({ role: "tool", tool_call_id: call.id, content: result.content });

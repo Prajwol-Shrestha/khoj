@@ -2,6 +2,7 @@
 
 import AgentSteps from "@/components/AgentSteps";
 import { AlertIcon, ChevronDownIcon, ScanIcon } from "@/components/Icons";
+import Markdown from "@/components/Markdown";
 import SourceChunk from "@/components/SourceChunk";
 import type { ChatMessage as ChatMessageType } from "@/lib/types";
 import { useState } from "react";
@@ -47,9 +48,7 @@ export default function ChatMessage({ message }: ChatMessageProps) {
             <span>Retrieving passages and composing an answer…</span>
           </div>
         ) : (
-          <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
-            {message.content}
-          </div>
+          <Markdown>{message.content}</Markdown>
         )}
 
         {message.error && (
