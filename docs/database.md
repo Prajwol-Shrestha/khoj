@@ -68,7 +68,7 @@ id  chunk_index  similarity  content
  4  3            0.52        "Refunds are allowed within 30 days of purchase."
 ```
 
-The index on `chunks.embedding` is `ivfflat` with `vector_cosine_ops` and `lists = 100`, which matches the `<=>` operator.
+There is no index on `chunks.embedding`, so every search compares the question with every chunk and the result is exact. See "Things to know" for why.
 
 ## Security: who can see what
 
@@ -105,8 +105,8 @@ Bucket `documents` holds the original uploads. It is **private**, and allows onl
 
 ## Things to know
 
-- **Search is approximate.** An `ivfflat` index looks at only a slice of the data, then applies the "this document only" filter afterwards. With little data, Postgres will usually ignore the index and compare everything, which is exact. With a lot of data, results can miss chunks or come back fewer than asked. If that happens, look at an `hnsw` index or turning on iterative scans.
-- **Missing indexes.** Only primary keys and the vector index exist. There is no index on `chunks.document_id`, `messages.session_id`, `chat_sessions.document_id` or `collection_id`, or the `user_id` columns. Fine for now, slow later, including for cascading deletes.
+- **No vector index, by design.** Khoj used to have an `ivfflat` index (`lists = 100`). It was dropped after a test of 18 questions showed it hurting. The index looks only inside the nearest list or two, and the "this document only" filter is applied afterwards. With a few hundred chunks that is about 3 candidates for the whole table, so most searches returned nothing from the right document: hit@3 was 22% with the index and 100% without. Exact search is fast enough up to tens of thousands of chunks. Past that, add an `hnsw` index with iterative scans on, and test again with a set of questions to check it loses nothing.
+- **Missing indexes.** Only primary keys exist. There is no index on `chunks.document_id`, `messages.session_id`, `chat_sessions.document_id` or `collection_id`, or the `user_id` columns. Fine for now, slow later, including for cascading deletes.
 - **Two versions of `match_chunks`.** The live database still has an older 3-argument version, `(query_embedding, match_document_id, match_count)`, which the app does not use. Only the 4-argument version is in `schema.sql`. To remove the old one:
   ```sql
   drop function public.match_chunks(vector, uuid, integer);

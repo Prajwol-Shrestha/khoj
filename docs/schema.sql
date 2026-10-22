@@ -83,9 +83,13 @@ create table public.messages (
   created_at    timestamptz default now()
 );
 
--- Approximate nearest-neighbour index for cosine distance.
-create index chunks_embedding_idx on public.chunks
-  using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+-- No vector index, on purpose: search compares every chunk (exact). An ivfflat
+-- index (lists = 100, default probes = 1) was dropped because it returned only a
+-- few candidates before the document filter, so most searches missed the right
+-- chunk (on a test of 18 questions, the right chunk was in the top 3 for 22% of
+-- them with the index and 100% without). At tens of thousands of chunks, add an
+-- hnsw index (vector_cosine_ops) with hnsw.iterative_scan on, and check with a
+-- test set that it does not lose results.
 
 -- Row level security. Signed-in users match on auth.uid(); guests match on the
 -- x-session-token header the browser client sends (lib/supabase/client.ts).
